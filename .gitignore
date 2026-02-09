@@ -1,15 +1,29 @@
-# Remix compiler artifacts
-**/artifacts/
-**/artifacts/**
+# Node / React
+node_modules/
+npm-debug.log*
+yarn-error.log*
 
-# Remix plugin state folders
-deps/
-states/
-
-# Debug info
-*.dbg.json
-*.tsbuildinfo
-
-# Optional
+# Env files
 .env
 .env.local
+.env.*
+
+# Build outputs
+dist/
+build/
+out/
+
+# Hardhat / Foundry
+cache/
+artifacts/
+broadcast/
+out/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+
+# IPFS / Reports
+ipfs/
+reports/
