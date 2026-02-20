@@ -60,6 +60,9 @@ contract VaultGuard is BaseGuard {
     /// @dev Minimum shares minted to avoid dust rounding exploits
     uint256 internal constant MIN_SHARES = 1e6;
 
+
+    uint256 internal constant MAX_EXCHANGE_RATE = 1.5e18; // 150% spike
+
     /*//////////////////////////////////////////////////////////////
                               MAIN CHECK
     //////////////////////////////////////////////////////////////*/
@@ -72,7 +75,7 @@ contract VaultGuard is BaseGuard {
     function checkVault(
         address vault,
         uint256 assets
-    ) external view returns (GuardResult memory) {
+    ) external view returns (GuardResult memory result) {
         IERC4626 v = IERC4626(vault);
         IERC20 asset = IERC20(v.asset());
 
@@ -83,11 +86,13 @@ contract VaultGuard is BaseGuard {
             1. Zero-supply inflation (classic donation attack)
         //////////////////////////////////////////////////////////////*/
 
-        if (totalSupply == 0 && totalAssets > 0) {
-            return _single(
-                RiskLevel.BLOCK,
-                VAULT_ZERO_SUPPLY_INFLATION
-            );
+        if(totalSupply == 0){
+            result.VAULT_ZERO_SUPPLY = true;
+        }
+
+        if (totalSupply == 0 && totalAssets > MAX_INITIAL_ASSETS) {
+           result.DONATION_ATTACK_POSSIBLE = true;
+            
         }
 
         /*//////////////////////////////////////////////////////////////
@@ -97,10 +102,7 @@ contract VaultGuard is BaseGuard {
         uint256 realBalance = asset.balanceOf(vault);
 
         if (realBalance > totalAssets) {
-            return _single(
-                RiskLevel.BLOCK,
-                VAULT_BALANCE_MISMATCH
-            );
+           result.VAULT_ASSET_BALANCE_MISMATCH = true;
         }
 
         /*//////////////////////////////////////////////////////////////
@@ -108,8 +110,21 @@ contract VaultGuard is BaseGuard {
         //////////////////////////////////////////////////////////////*/
 
         if (totalSupply > 0 && totalAssets > 0) {
-            uint256 exchangeRate = (totalAssets * 1e18) / totalSupply;
 
+            uint256 assetDecimals = asset.decimals();
+            uint256 vaultDecimals = IERC20(vault).decimals();
+
+            // Normalize to 18 decimals for comparison
+            uint256 normalizedTotalAssets = _normalizedValue(totalAssets, assetDecimals);
+            uint256 normalizedTotalSupply = _normalizedValue(totalSupply, vaultDecimals);
+
+            uint256 exchangeRate = (normalizedTotalAssets * 1e18) / normalizedTotalSupply;
+
+            if(exchangeRate > MAX_EXCHANGE_RATE){
+                result.EXCHANGE_RATE_SPIKE = true;
+            }
+
+        }
             // Simulate small deposit to infer rate stability
             uint256 previewShares = v.previewDeposit(assets);
 
@@ -172,4 +187,20 @@ contract VaultGuard is BaseGuard {
             return ((b - a) * BPS_DENOM) / b;
         }
     }
+
+
+    function _normalizedValue(
+        uint256 value,
+        uint256 decimals
+    ) internal pure returns (uint256) {
+        if(decimals == 18) return value;
+
+        if (decimals < 18) {
+            return value * (10 ** (18 - decimals));
+        }
+
+        if(decimals > 18){
+            return value / (10 ** (decimals - 18));
+        }
+}
 }

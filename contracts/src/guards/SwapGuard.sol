@@ -37,15 +37,13 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
                             CONFIG
     //////////////////////////////////////////////////////////////*/
 
-    address public v2Router;
     address public v3Factory;
-    address public v2Factory;
 
     uint256 public constant PRICE_DEVIATION_THRESHOLD = 500; // 5% BPS
     uint256 public constant MINIMUM_THRESHOLD_RESERVE = 1e6;
     uint256 public constant THRESHOLD_SUPPLY = 1e6;
     uint256 public constant THRESHOLD_CUMULATIVE_PRICE = 1;
-    uint256 public constant MAX_DEVIATION_BPS = 200; // 2%
+    uint256 public constant MAX_DEVIATION_BPS = 500; // 5%
 
     /*//////////////////////////////////////////////////////////////
                         SNAPSHOT STORAGE (BLOCK BASED)
@@ -61,16 +59,9 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
 
     constructor() { _disableInitializers(); }
 
-    function initialize(
-        address _v2Router,
-        address _v2Factory,
-        address _v3Factory
-    ) public initializer {
+    function initialize() public initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
-        v2Router = _v2Router;
-        v2Factory = _v2Factory;
-        v3Factory = _v3Factory;
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
@@ -80,13 +71,14 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
     //////////////////////////////////////////////////////////////*/
 
     function swapCheckV2Pool(
+        address v2Router,
         address[] calldata path,
         uint256 amountIn,
         uint256 amountOut
     ) external view returns (GuardResultV2 memory result) {
 
         bool isExactIn = amountIn != 0;
-        result = checkV2pool(path, isExactIn);
+        result = checkV2pool(v2Router,path, isExactIn);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -94,6 +86,7 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
     //////////////////////////////////////////////////////////////*/
 
     function checkV2pool(
+        address v2Router,
         address[] memory path,
         bool isExactIn
     ) public view returns (GuardResultV2 memory result) {
@@ -106,15 +99,11 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
 
         for (uint256 i = 0; i < pathLength - 1; i++) {
 
-            address pair = _getV2Pair(path[i], path[i+1]);
+            address pair = _getV2Pair(v2Router,path[i], path[i+1]);
 
             if (pair == address(0)) {
                 result.POOL_NOT_EXISTS = true;
                 continue;
-            }
-
-            if (IUniswapV2Pair(pair).factory() != v2Factory) {
-                result.FACTORY_MISMATCH_WITH_POOL = true;
             }
 
             (uint112 reserve0, uint112 reserve1, uint32 lastTimestamp) =
@@ -182,16 +171,13 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
         PriceSnapshot memory snap = snapshots[pair];
         if (snap.blockNumber == 0) return false;
 
-        uint256 fairPrice = getFairPrice(
-            pair,
-            
-        );
+        (uint224 fairPrice0, uint224 fairPrice1) = getFairPrice(pair);
 
-        if (fairPrice == 0) return false;
+        if (fairPrice0 == 0 && fairPrice1 == 0) return false;
 
-        uint256 spotPrice = (uint256(reserve1) * 1e18) / reserve0;       // ToDo decimals and v2 fees must be taken into account ..
+        uint256 spotPrice = (uint256(reserve1) * 1e18) / reserve0;       // implement this taking into accounts -  decimals and v2 fees must be taken into account during spot price calcuaitons..
 
-        return !_checkDeviation(spotPrice, fairPrice);
+        return !_checkDeviation(spotPrice, fairPrice0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -204,20 +190,29 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
         override
         returns (bool upkeepNeeded, bytes memory performData)
     {
-        for (uint256 i = 0; i < trackedPools.length; i++) {
+        address[] memory UpkeepNeededPools = new address[]();
+        uint256 trackedPoolsLength = trackedPools.length;
+
+        for (uint256 i = 0; i < trackedPoolsLength; i++) {
             address pool = trackedPools[i];
             if (block.number - snapshots[pool].lastBlock >= snapshotBlockInterval) {
-                return (true, abi.encode(pool));
+                UpkeepNeededPools.push(pool);
             }
+        }
+        if (UpkeepNeededPools.length > 0) {
+            return (true, keccak256(abi.encode(UpkeepNeededPools)));
         }
         return (false, bytes(""));
     }
 
     function performUpkeep(bytes calldata performData) external override {
-        address pool = abi.decode(performData, (address));
-
-        if (block.number - snapshots[pool].lastBlock >= snapshotBlockInterval) {
-            _recordSnapshot(pool);
+        address[] memory pools = abi.decode(performData, (address[]));
+        uint256 poolsLength = pools.length;
+        for (uint256 i = 0; i < poolsLength; i++) {
+            address pool = pools[i];
+            if (block.number - snapshots[pool].lastBlock >= snapshotBlockInterval) {
+                _recordSnapshot(pool);
+            }
         }
     }
 
@@ -243,24 +238,23 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
      * @dev CALCULATE: Derive the TWAP for the specific token being swapped.
      * @param tokenIn The token the user is selling.
      */
-    function getFairPrice(address pair, address tokenIn) public view returns (uint224) {
+    function getFairPrice(address pair) public view returns (uint224,uint224) {
         PriceSnapshot memory snap = snapshots[pair];
         IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
         
         uint32 timeElapsed = uint32(block.timestamp) - snap.timestamp;
-        if (timeElapsed == 0) return 0; // Should handle in logic
+        if (timeElapsed == 0) return (0,0); // Should handle in logic
 
         // Identify which cumulative to use
-        bool isToken0 = tokenIn == pairContract.token0();
-        uint256 currentCumulative = isToken0 ? 
-            pairContract.price0CumulativeLast() : 
-            pairContract.price1CumulativeLast();
+        uint256 currentCumulative0 =  pairContract.price0CumulativeLast();
+        uint256 currentCumulative1 =  pairContract.price1CumulativeLast();
             
-        uint256 snapCumulative = isToken0 ? snap.cumulative0 : snap.cumulative1;
+        uint256 snapCumulative0 = snap.cumulative0;
+        uint256 snapCumulative1 = snap.cumulative1;
 
         // TWAP Formula: (C2 - C1) / (T2 - T1)
         // Result is in UQ112x112
-        return uint224((currentCumulative - snapCumulative) / timeElapsed);
+        return (uint224((currentCumulative0 - snapCumulative0) / timeElapsed), uint224((currentCumulative1 - snapCumulative1) / timeElapsed));
     }
     /*//////////////////////////////////////////////////////////////
                     BPS DEVIATION CHECK
@@ -275,18 +269,19 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
 
         uint256 diff = spot > twap ? spot - twap : twap - spot;
 
-        return (diff * 10000) / twap < MAX_DEVIATION_BPS;
+        return (diff * 100_00) / twap < MAX_DEVIATION_BPS;
     }
 
     /*//////////////////////////////////////////////////////////////
                         PAIR LOOKUP
     //////////////////////////////////////////////////////////////*/
 
-    function _getV2Pair(address tokenA, address tokenB)
+    function _getV2Pair(address v2Router, address tokenA, address tokenB)
         internal
         view
         returns (address pair)
     {
+         address v2Factory = IUniswapV2Router(v2Router).factory();
         (bool success, bytes memory data) =
             v2Factory.staticcall(
                 abi.encodeWithSignature("getPair(address,address)", tokenA, tokenB)
