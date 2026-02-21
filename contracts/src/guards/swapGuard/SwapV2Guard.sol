@@ -8,7 +8,7 @@ import "@chainlink/contracts/src/v0.8/automation/interfaces/AutomationCompatible
 import {IUniswapV2Router,IUniswapV2Pair} from "../interfaces/ICamelot.sol";
 import {IUniswapV3Factory,IUniswapV3Pool} from "../interfaces/ICamelot.sol";
 
-contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCompatibleInterface {
+contract SwapV2Guard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCompatibleInterface {
 
     /*//////////////////////////////////////////////////////////////
                             STRUCTS
@@ -37,7 +37,6 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
                             CONFIG
     //////////////////////////////////////////////////////////////*/
 
-    address public v3Factory;
 
     uint256 public constant PRICE_DEVIATION_THRESHOLD = 500; // 5% BPS
     uint256 public constant MINIMUM_THRESHOLD_RESERVE = 1e6;
@@ -57,7 +56,9 @@ contract SwapGuard is IGuard, UUPSUpgradeable, OwnableUpgradeable, AutomationCom
                             INIT
     //////////////////////////////////////////////////////////////*/
 
-    constructor() { _disableInitializers(); }
+    constructor() { 
+        _disableInitializers();
+         }
 
     function initialize() public initializer {
         __Ownable_init(msg.sender);
