@@ -2,35 +2,34 @@
 pragma solidity ^0.8.20;
 
 /**
- * @title  PreFlightRouter
+ * @title  PreFlightRouter  (v2 — with RiskReportNFT integration)
  * @notice Single atomic entry point for the PreFlight browser extension.
  *
- * Architecture
- * ────────────
- * Extension flow (per intercepted tx):
+ * ─── User flow ───────────────────────────────────────────────────────────
  *
- *   1. [OFF-CHAIN — eth_call]
- *      extension calls simulateVault() or simulateSwap()
- *      → returns full result struct, preview amounts, no gas spent
+ *  1. [OFF-CHAIN — eth_call]
+ *     simulateVault() or simulateSwap()
+ *     → full flag struct + criticalBlock bool, zero gas
  *
- *   2. [EXTENSION UI]
- *      flags are mapped to user-facing warnings / hard blocks via Policy.
- *      User confirms or cancels.
+ *  2. [STORE CHECK — on-chain tx]
+ *     storeVaultCheck() or storeSwapCheck()
+ *     → calls guard.storeCheckFor(user) to record fingerprint in guard storage
+ *     → mints a RiskReportNFT to the user representing the check state
+ *     → returns tokenId
  *
- *   3. [ON-CHAIN — real tx]
- *      extension submits executeVaultDeposit / executeVaultRedeem / executeSwap
- *      → re-runs guard (NO repeated check logic — delegates 100% to guard contracts)
- *      → applies Policy (which flags are hard-block vs soft-warn)
- *      → executes the underlying action atomically
- *      → reverts the entire tx if state changed between simulation and execution
+ *  3. [EXECUTE — on-chain tx, SAME BLOCK as step 2]
+ *     executeVaultDeposit() / executeVaultRedeem() / executeSwap()
+ *     → calls guard.validateFor(user) — reverts if state changed since step 2
+ *     → enforces policy on result flags
+ *     → performs the underlying action atomically
+ *     → calls nft.consume(tokenId) to mark the report as CONSUMED
  *
- * This contract is ONLY a coordinator:
- *   • It contains ZERO check logic — that lives in VaultGuard / SwapV2Guard
- *   • It contains ZERO ERC20 logic — that lives in TokenGuard (via VaultGuard)
- *   • It enforces Policy and orchestrates token flows
+ * ─── Separation of concerns ──────────────────────────────────────────────
+ *   • VaultGuard / SwapV2Guard  — all check logic lives here
+ *   • RiskReportNFT             — all NFT logic lives here
+ *   • PreFlightRouter           — coordination, policy enforcement, token flows
  *
- * Interfaces are kept in sync with the updated guard contracts
- * (VaultGuard v2 and SwapV2Guard v2).
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -38,15 +37,12 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {RiskReportNFT} from "./RiskReportNFT.sol";
 
 /*//////////////////////////////////////////////////////////////
-                   GUARD INTERFACES (kept in sync)
+             GUARD INTERFACES  (kept in sync with guard contracts)
 //////////////////////////////////////////////////////////////*/
 
-/**
- * @dev Must mirror VaultGuard.VaultGuardResult exactly.
- *      If VaultGuard is upgraded and fields change, update this.
- */
 struct VaultGuardResult {
     bool VAULT_NOT_WHITELISTED;
     bool VAULT_ZERO_SUPPLY;
@@ -62,14 +58,8 @@ struct VaultGuardResult {
     bool EXCEEDS_MAX_DEPOSIT;
     bool EXCEEDS_MAX_REDEEM;
     bool PREVIEW_CONVERT_MISMATCH;
-    // TokenGuardResult is intentionally NOT mirrored here.
-    // The router only reads vault-level flags for policy enforcement.
-    // Token-level details are consumed by the UI layer via simulateVault().
 }
 
-/**
- * @dev Must mirror SwapV2Guard.GuardResultV2 exactly.
- */
 struct SwapGuardResult {
     bool DEEP_MULTIHOP;
     bool DUPLICATE_TOKEN_IN_PATH;
@@ -87,76 +77,73 @@ struct SwapGuardResult {
 }
 
 interface IVaultGuard {
-    function checkVault(
-        address vault,
-        uint256 amount,
-        bool    isDeposit
-    ) external view returns (
-        VaultGuardResult memory result,
-        uint256          previewShares,
-        uint256          previewAssets
-    );
+    /// Pure view — no state changes. Used by simulateVault and storeVaultCheck.
+    function checkVault(address vault, uint256 amount, bool isDeposit)
+        external view
+        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets);
+
+    /// Stores the check fingerprint for `user`. Only callable by authorizedRouter.
+    /// Returns the keccak256 hash of the stored check (used to build the NFT checkHash).
+    function storeCheckFor(address vault, uint256 amount, bool isDeposit, address user)
+        external returns (bytes32 checkHash);
+
+    /// Validates that the current state matches the fingerprint stored for `user`.
+    /// Reverts with a descriptive message on mismatch or staleness.
+    function validateFor(address vault, uint256 amount, bool isDeposit, address user)
+        external view;
 }
 
 interface ISwapV2Guard {
-    function swapCheckV2(
-        address          router,
-        address[] calldata path,
-        uint256          amountIn
-    ) external view returns (SwapGuardResult memory result);
+    /// Pure view — no state changes. Used by simulateSwap and storeSwapCheck.
+    function swapCheckV2(address router, address[] calldata path, uint256 amountIn)
+        external view returns (SwapGuardResult memory result);
+
+    /// Stores the swap check fingerprint for `user`. Only callable by authorizedRouter.
+    function storeSwapCheckFor(address router, address[] calldata path, uint256 amountIn, address user)
+        external returns (bytes32 checkHash);
+
+    /// Validates that the current state matches the stored swap fingerprint for `user`.
+    function validateSwapFor(address router, address[] calldata path, uint256 amountIn, address user)
+        external view;
 }
 
 interface IUniswapV2Router {
     function swapExactTokensForTokens(
-        uint256          amountIn,
-        uint256          amountOutMin,
-        address[] calldata path,
-        address          to,
-        uint256          deadline
+        uint256 amountIn, uint256 amountOutMin,
+        address[] calldata path, address to, uint256 deadline
     ) external returns (uint256[] memory amounts);
 
     function swapExactTokensForTokensSupportingFeeOnTransferTokens(
-        uint256          amountIn,
-        uint256          amountOutMin,
-        address[] calldata path,
-        address          to,
-        uint256          deadline
+        uint256 amountIn, uint256 amountOutMin,
+        address[] calldata path, address to, uint256 deadline
     ) external;
 }
 
 /*//////////////////////////////////////////////////////////////
-                   POLICY STRUCT
+                        POLICY  STRUCT
 //////////////////////////////////////////////////////////////*/
 
 /**
- * @notice Defines which guard flags cause a hard revert vs which are allowed
- *         if the caller explicitly opts in.
+ * @notice Per-call execution policy. Extension builds this struct from user settings.
  *
- * The browser extension sets this per-transaction based on user preferences
- * and risk settings. Conservative mode sets both arrays to all-true.
+ * hardBlock[i] = true  → tx reverts if flag i is set, regardless of allowSoftRisk.
+ * softWarn[i]  = true  → tx reverts if flag i is set AND allowSoftRisk == false.
  *
- * hardBlockVault[i] / hardBlockSwap[i] correspond to the i-th bool field of
- * VaultGuardResult / SwapGuardResult in declaration order.
+ * Pass a zero-initialised struct to use only the built-in absolute hard blocks.
+ * Use defaultVaultHardBlocks() / defaultSwapHardBlocks() to get the floor set.
  *
- * Soft-warn flags are passed as softBlockVault / softBlockSwap.
- * If any soft flag is triggered AND allowRisk == false, the tx reverts.
- *
- * NOTE: PREVIEW_REVERT, ZERO_SHARES_OUT, ZERO_ASSETS_OUT are ALWAYS hard-blocked
- *       regardless of policy — they represent states where execution is nonsensical.
+ * Flag indices match the struct field declaration order in VaultGuardResult (14 fields)
+ * and SwapGuardResult (13 fields).
  */
 struct ExecutionPolicy {
-    // vault hard blocks (index matches VaultGuardResult field order, skipping tokenResult)
     bool[14] hardBlockVault;
-    // vault soft warns
     bool[14] softWarnVault;
-    // swap hard blocks (index matches SwapGuardResult field order)
     bool[13] hardBlockSwap;
-    // swap soft warns
     bool[13] softWarnSwap;
 }
 
 /*//////////////////////////////////////////////////////////////
-                   MAIN CONTRACT
+                        MAIN  CONTRACT
 //////////////////////////////////////////////////////////////*/
 
 contract PreFlightRouter is
@@ -170,10 +157,10 @@ contract PreFlightRouter is
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    IVaultGuard  public vaultGuard;
-    ISwapV2Guard public swapGuard;
+    IVaultGuard   public vaultGuard;
+    ISwapV2Guard  public swapGuard;
+    RiskReportNFT public riskNFT;
 
-    /// Only routers set here can be used via executeSwap.
     mapping(address => bool) public trustedRouters;
 
     /*//////////////////////////////////////////////////////////////
@@ -181,30 +168,29 @@ contract PreFlightRouter is
     //////////////////////////////////////////////////////////////*/
 
     event GuardsUpdated(address vaultGuard, address swapGuard);
+    event NFTUpdated(address nft);
     event RouterTrusted(address indexed router, bool trusted);
 
+    event VaultCheckStored(
+        address indexed user, address indexed vault,
+        bool isDeposit, uint256 tokenId, RiskReportNFT.RiskLevel riskLevel
+    );
+    event SwapCheckStored(
+        address indexed user, address indexed router,
+        uint256 tokenId, RiskReportNFT.RiskLevel riskLevel
+    );
+
     event VaultDepositExecuted(
-        address indexed user,
-        address indexed vault,
-        uint256         assetsIn,
-        uint256         sharesOut,
-        address         receiver
+        address indexed user, address indexed vault,
+        uint256 assetsIn, uint256 sharesOut, address receiver, uint256 nftTokenId
     );
-
     event VaultRedeemExecuted(
-        address indexed user,
-        address indexed vault,
-        uint256         sharesIn,
-        uint256         assetsOut,
-        address         receiver
+        address indexed user, address indexed vault,
+        uint256 sharesIn, uint256 assetsOut, address receiver, uint256 nftTokenId
     );
-
     event SwapExecuted(
-        address indexed user,
-        address indexed router,
-        address[]       path,
-        uint256         amountIn,
-        uint256         amountOut   // actual output from router return value
+        address indexed user, address indexed router,
+        address[] path, uint256 amountIn, uint256 amountOut, uint256 nftTokenId
     );
 
     /*//////////////////////////////////////////////////////////////
@@ -215,33 +201,36 @@ contract PreFlightRouter is
         _disableInitializers();
     }
 
-    function initialize(address _vaultGuard, address _swapGuard) external initializer {
+    function initialize(
+        address _vaultGuard,
+        address _swapGuard,
+        address _riskNFT
+    ) external initializer {
         __Ownable_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
-        require(_vaultGuard != address(0) && _swapGuard != address(0), "ZERO_GUARD");
+        require(_vaultGuard != address(0) && _swapGuard != address(0) && _riskNFT != address(0),
+            "ZERO_ADDRESS");
         vaultGuard = IVaultGuard(_vaultGuard);
         swapGuard  = ISwapV2Guard(_swapGuard);
+        riskNFT    = RiskReportNFT(_riskNFT);
         emit GuardsUpdated(_vaultGuard, _swapGuard);
+        emit NFTUpdated(_riskNFT);
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /*//////////////////////////////////////////////////////////////
-        STEP 1 — OFF-CHAIN SIMULATION (eth_call, no gas, no state)
+        STEP 1 — SIMULATION  (eth_call, zero gas, zero state)
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Pure view simulation for vault deposit/redeem.
-     *         Call via eth_call from the extension to show warnings before tx.
-     *
-     * @param vault     ERC-4626 vault
-     * @param amount    Assets (deposit) or shares (redeem)
-     * @param isDeposit true = deposit, false = redeem
-     * @return result       Full flag struct
-     * @return previewShares Estimated shares minted (deposit) or 0
-     * @return previewAssets Estimated assets returned (redeem) or 0
-     * @return criticalBlock true if any flag would cause a hard block with the default policy
+     * @notice Simulate a vault deposit or redeem. Call via eth_call before any tx.
+     * @return result        Full VaultGuardResult flag struct.
+     * @return previewShares Estimated shares minted (deposit) or 0.
+     * @return previewAssets Estimated assets returned (redeem) or 0.
+     * @return criticalBlock true if execution would be hard-blocked by default policy.
+     * @return riskLevel     SAFE / WARNING / CRITICAL — for immediate UI display.
      */
     function simulateVault(
         address vault,
@@ -254,24 +243,20 @@ contract PreFlightRouter is
             VaultGuardResult memory result,
             uint256          previewShares,
             uint256          previewAssets,
-            bool             criticalBlock
+            bool             criticalBlock,
+            RiskReportNFT.RiskLevel riskLevel
         )
     {
-        (result, previewShares, previewAssets) =
-            vaultGuard.checkVault(vault, amount, isDeposit);
-
+        (result, previewShares, previewAssets) = vaultGuard.checkVault(vault, amount, isDeposit);
         criticalBlock = _vaultHasCritical(result, isDeposit);
+        riskLevel = _computeVaultRisk(result);
     }
 
     /**
-     * @notice Pure view simulation for a V2 swap.
-     *         Call via eth_call from the extension to show warnings before tx.
-     *
-     * @param router    Uniswap V2-compatible router
-     * @param path      Token path
-     * @param amountIn  Exact input amount (used for impact check inside guard)
-     * @return result        Full flag struct
-     * @return criticalBlock true if any flag would cause a hard block with the default policy
+     * @notice Simulate a V2 swap. Call via eth_call before any tx.
+     * @return result        Full SwapGuardResult flag struct.
+     * @return criticalBlock true if execution would be hard-blocked by default policy.
+     * @return riskLevel     SAFE / WARNING / CRITICAL.
      */
     function simulateSwap(
         address          router,
@@ -282,43 +267,156 @@ contract PreFlightRouter is
         view
         returns (
             SwapGuardResult memory result,
-            bool            criticalBlock
+            bool            criticalBlock,
+            RiskReportNFT.RiskLevel riskLevel
         )
     {
         require(trustedRouters[router], "UNTRUSTED_ROUTER");
         result = swapGuard.swapCheckV2(router, path, amountIn);
         criticalBlock = _swapHasCritical(result);
+        riskLevel = _computeSwapRisk(result);
     }
 
     /*//////////////////////////////////////////////////////////////
-        STEP 2 — ON-CHAIN EXECUTION (re-checks then executes atomically)
+        STEP 2 — STORE CHECK + MINT NFT
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Record the current vault state for `msg.sender` and mint a RiskReportNFT.
+     *         Must be called in the same block as executeVaultDeposit / executeVaultRedeem.
+     *
+     * @param vault     ERC-4626 vault.
+     * @param amount    Assets (deposit) or shares (redeem).
+     * @param isDeposit true = deposit, false = redeem.
+     * @return tokenId  The minted NFT token ID. Pass to the execute function.
+     */
+    function storeVaultCheck(
+        address vault,
+        uint256 amount,
+        bool    isDeposit
+    )
+        external
+        nonReentrant
+        returns (uint256 tokenId)
+    {
+        require(amount > 0, "ZERO_AMOUNT");
+
+        // Run check to build NFT metadata (same data guard will store).
+        (VaultGuardResult memory result, uint256 pShares, uint256 pAssets) =
+            vaultGuard.checkVault(vault, amount, isDeposit);
+
+        // Store fingerprint in VaultGuard (indexed by user, not router).
+        bytes32 checkHash = vaultGuard.storeCheckFor(vault, amount, isDeposit, msg.sender);
+
+        // Compute risk level and pack flags.
+        RiskReportNFT.RiskLevel riskLevel = _computeVaultRisk(result);
+        uint32  flagsPacked = _packVaultFlags(result);
+        (uint8 crit, uint8 soft) = _countVaultFlags(result, isDeposit);
+        uint256 previewValue = isDeposit ? pShares : pAssets;
+
+        // Mint NFT.
+        RiskReportNFT.RiskReport memory report = RiskReportNFT.RiskReport({
+            reportType:    isDeposit
+                               ? RiskReportNFT.ReportType.VAULT_DEPOSIT
+                               : RiskReportNFT.ReportType.VAULT_REDEEM,
+            riskLevel:     riskLevel,
+            status:        RiskReportNFT.Status.PENDING,
+            user:          msg.sender,
+            target:        vault,
+            router:        address(0),
+            amount:        amount,
+            previewValue:  previewValue,
+            blockNumber:   block.number,
+            timestamp:     block.timestamp,
+            checkHash:     checkHash,
+            flagsPacked:   flagsPacked,
+            totalFlags:    14,
+            criticalCount: crit,
+            softCount:     soft
+        });
+
+        tokenId = riskNFT.mint(msg.sender, report);
+
+        emit VaultCheckStored(msg.sender, vault, isDeposit, tokenId, riskLevel);
+    }
+
+    /**
+     * @notice Record the current swap state for `msg.sender` and mint a RiskReportNFT.
+     *         Must be called in the same block as executeSwap.
+     *
+     * @param router    Trusted V2 router.
+     * @param path      Token path.
+     * @param amountIn  Exact input amount.
+     * @return tokenId  The minted NFT token ID.
+     */
+    function storeSwapCheck(
+        address          router,
+        address[] calldata path,
+        uint256          amountIn
+    )
+        external
+        nonReentrant
+        returns (uint256 tokenId)
+    {
+        require(amountIn > 0,          "ZERO_AMOUNT");
+        require(path.length >= 2,      "PATH_TOO_SHORT");
+        require(trustedRouters[router], "UNTRUSTED_ROUTER");
+
+        // Run check to build NFT metadata.
+        SwapGuardResult memory result = swapGuard.swapCheckV2(router, path, amountIn);
+
+        // Store fingerprint in SwapV2Guard.
+        bytes32 checkHash = swapGuard.storeSwapCheckFor(router, path, amountIn, msg.sender);
+
+        // Build NFT.
+        RiskReportNFT.RiskLevel riskLevel = _computeSwapRisk(result);
+        uint32 flagsPacked = _packSwapFlags(result);
+        (uint8 crit, uint8 soft) = _countSwapFlags(result);
+
+        RiskReportNFT.RiskReport memory report = RiskReportNFT.RiskReport({
+            reportType:    RiskReportNFT.ReportType.SWAP,
+            riskLevel:     riskLevel,
+            status:        RiskReportNFT.Status.PENDING,
+            user:          msg.sender,
+            target:        path[0],
+            router:        router,
+            amount:        amountIn,
+            previewValue:  0,
+            blockNumber:   block.number,
+            timestamp:     block.timestamp,
+            checkHash:     checkHash,
+            flagsPacked:   flagsPacked,
+            totalFlags:    13,
+            criticalCount: crit,
+            softCount:     soft
+        });
+
+        tokenId = riskNFT.mint(msg.sender, report);
+
+        emit SwapCheckStored(msg.sender, router, tokenId, riskLevel);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        STEP 3 — EXECUTE  (validates then acts atomically)
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Deposit assets into an ERC-4626 vault.
      *
-     * Flow:
-     *   1. Re-runs VaultGuard.checkVault (source of truth — no repeated logic here)
-     *   2. Applies policy — reverts on critical or (if !allowSoftRisk) soft flags
-     *   3. Pulls assets from caller
-     *   4. Approves vault
-     *   5. Calls vault.deposit(amount, receiver)
-     *   6. Enforces slippage via minSharesOut
-     *
-     * The caller must have approved this router for `amount` of the vault's asset.
-     *
-     * @param vault        ERC-4626 vault
-     * @param amount       Asset amount to deposit
-     * @param receiver     Address to receive shares
-     * @param minSharesOut Minimum shares to receive (slippage protection)
-     * @param allowSoftRisk If true, proceed despite soft-warn flags. User must explicitly set.
-     * @param policy       Per-call policy override. Pass a zero-initialised struct to use defaults.
+     * @param vault        ERC-4626 vault.
+     * @param amount       Asset amount. Must match what was passed to storeVaultCheck.
+     * @param receiver     Shares recipient.
+     * @param minSharesOut Slippage floor.
+     * @param nftTokenId   Token ID returned by storeVaultCheck. Will be consumed on success.
+     * @param allowSoftRisk Proceed past soft-warn flags if true.
+     * @param policy       Per-call policy. Zero-initialised = default floor only.
      */
     function executeVaultDeposit(
         address         vault,
         uint256         amount,
         address         receiver,
         uint256         minSharesOut,
+        uint256         nftTokenId,
         bool            allowSoftRisk,
         ExecutionPolicy calldata policy
     )
@@ -326,61 +424,49 @@ contract PreFlightRouter is
         nonReentrant
         returns (uint256 sharesOut)
     {
-        require(amount > 0,           "ZERO_AMOUNT");
+        require(amount > 0,             "ZERO_AMOUNT");
         require(receiver != address(0), "ZERO_RECEIVER");
+        _requireNFTPending(nftTokenId, msg.sender);
 
-        // ── Re-run guard (delegates entirely to VaultGuard) ──────────────
-        (VaultGuardResult memory result,,) =
-            vaultGuard.checkVault(vault, amount, true);
+        // Re-run guard + validate state hasn't changed since storeVaultCheck.
+        vaultGuard.validateFor(vault, amount, true, msg.sender);
 
-        // ── Apply policy ──────────────────────────────────────────────────
+        // Fetch current result for policy enforcement.
+        (VaultGuardResult memory result,,) = vaultGuard.checkVault(vault, amount, true);
         _enforceVaultPolicy(result, policy, allowSoftRisk, true);
 
-        // ── Execute ───────────────────────────────────────────────────────
+        // Execute.
         IERC20 asset = IERC20(IERC4626(vault).asset());
-
         asset.safeTransferFrom(msg.sender, address(this), amount);
         asset.forceApprove(vault, amount);
-
         sharesOut = IERC4626(vault).deposit(amount, receiver);
-
-        // ── Slippage check ────────────────────────────────────────────────
-        require(sharesOut >= minSharesOut, "SLIPPAGE: insufficient shares");
-
-        // Clear any residual approval (safety — some tokens require it)
         asset.forceApprove(vault, 0);
 
-        emit VaultDepositExecuted(msg.sender, vault, amount, sharesOut, receiver);
+        require(sharesOut >= minSharesOut, "SLIPPAGE: insufficient shares");
+
+        // Consume NFT — marks as CONSUMED (permanent audit record).
+        riskNFT.consume(nftTokenId);
+
+        emit VaultDepositExecuted(msg.sender, vault, amount, sharesOut, receiver, nftTokenId);
     }
 
     /**
-     * @notice Redeem shares from an ERC-4626 vault (shares in → assets out).
+     * @notice Redeem shares from an ERC-4626 vault (shares → assets).
      *
-     * Flow:
-     *   1. Re-runs VaultGuard.checkVault
-     *   2. Applies policy
-     *   3. Pulls shares from caller (caller must approve this router for shares)
-     *   4. Calls vault.redeem(shares, receiver, address(this))
-     *   5. Enforces slippage via minAssetsOut
-     *
-     * WHY address(this) as owner:
-     *   The router holds the shares after pulling them from the user.
-     *   vault.redeem(shares, receiver, owner) burns shares from `owner`.
-     *   Since the router now owns the shares (after safeTransferFrom), it is the owner.
-     *   The assets go directly to `receiver`.
-     *
-     * @param vault        ERC-4626 vault
-     * @param shares       Share amount to burn
-     * @param receiver     Address to receive assets
-     * @param minAssetsOut Minimum assets to receive (slippage protection)
-     * @param allowSoftRisk If true, proceed despite soft-warn flags.
-     * @param policy       Per-call policy override.
+     * @param vault        ERC-4626 vault.
+     * @param shares       Share amount. Must match what was passed to storeVaultCheck.
+     * @param receiver     Assets recipient.
+     * @param minAssetsOut Slippage floor.
+     * @param nftTokenId   Token ID returned by storeVaultCheck.
+     * @param allowSoftRisk Proceed past soft-warn flags if true.
+     * @param policy       Per-call policy.
      */
     function executeVaultRedeem(
         address         vault,
         uint256         shares,
         address         receiver,
         uint256         minAssetsOut,
+        uint256         nftTokenId,
         bool            allowSoftRisk,
         ExecutionPolicy calldata policy
     )
@@ -388,56 +474,41 @@ contract PreFlightRouter is
         nonReentrant
         returns (uint256 assetsOut)
     {
-        require(shares > 0,            "ZERO_SHARES");
+        require(shares > 0,             "ZERO_SHARES");
         require(receiver != address(0), "ZERO_RECEIVER");
+        _requireNFTPending(nftTokenId, msg.sender);
 
-        // ── Re-run guard ──────────────────────────────────────────────────
-        (VaultGuardResult memory result,,) =
-            vaultGuard.checkVault(vault, shares, false);
+        vaultGuard.validateFor(vault, shares, false, msg.sender);
 
-        // ── Apply policy ──────────────────────────────────────────────────
+        (VaultGuardResult memory result,,) = vaultGuard.checkVault(vault, shares, false);
         _enforceVaultPolicy(result, policy, allowSoftRisk, false);
 
-        // ── Pull shares from caller → this router ─────────────────────────
-        // User must have approved the router for `shares` of the vault token.
+        // Pull shares from user into router, then redeem as owner.
         IERC20(vault).safeTransferFrom(msg.sender, address(this), shares);
-
-        // ── Approve vault to burn shares from this router (required by some vaults) ──
-        // Most ERC-4626 implementations burn from `owner` directly via internal call,
-        // but some override redeem to use transferFrom. Approve to handle both.
         IERC20(vault).forceApprove(vault, shares);
-
-        // ── Execute redeem: shares owned by this contract → assets to receiver ──
         assetsOut = IERC4626(vault).redeem(shares, receiver, address(this));
-
-        // ── Slippage check ────────────────────────────────────────────────
-        require(assetsOut >= minAssetsOut, "SLIPPAGE: insufficient assets");
-
         IERC20(vault).forceApprove(vault, 0);
 
-        emit VaultRedeemExecuted(msg.sender, vault, shares, assetsOut, receiver);
+        require(assetsOut >= minAssetsOut, "SLIPPAGE: insufficient assets");
+
+        riskNFT.consume(nftTokenId);
+
+        emit VaultRedeemExecuted(msg.sender, vault, shares, assetsOut, receiver, nftTokenId);
     }
 
     /**
-     * @notice Execute a guarded UniswapV2-style token swap.
+     * @notice Execute a guarded V2 swap.
      *
-     * Flow:
-     *   1. Re-runs SwapV2Guard.swapCheckV2 (amountIn-aware, includes impact check)
-     *   2. Applies policy
-     *   3. Pulls tokenIn from caller
-     *   4. Executes swap via router (standard or fee-on-transfer variant)
-     *   5. Actual amountOut is logged from router return value
-     *
-     * @param router          Trusted UniswapV2-style router
-     * @param amountIn        Exact input amount
-     * @param amountOutMin    Minimum output (slippage protection — enforced by router)
-     * @param path            Token path
-     * @param receiver        Address to receive output tokens
-     * @param deadline        Unix timestamp — router will revert if exceeded
-     * @param feeOnTransfer   True = use swapExactTokensForTokensSupportingFeeOnTransferTokens
-     *                        The extension should set this if POSSIBLE_FEE_ON_TRANSFER is flagged
-     * @param allowSoftRisk   If true, proceed past soft-warn flags.
-     * @param policy          Per-call policy override.
+     * @param router         Trusted V2 router.
+     * @param amountIn       Exact input. Must match what was passed to storeSwapCheck.
+     * @param amountOutMin   Slippage floor — enforced by router.
+     * @param path           Token path.
+     * @param receiver       Output token recipient.
+     * @param deadline       Router deadline.
+     * @param feeOnTransfer  Use fee-on-transfer variant. Set if TokenGuard flagged POSSIBLE_FEE_ON_TRANSFER.
+     * @param nftTokenId     Token ID returned by storeSwapCheck.
+     * @param allowSoftRisk  Proceed past soft-warn flags if true.
+     * @param policy         Per-call policy.
      */
     function executeSwap(
         address          router,
@@ -447,6 +518,7 @@ contract PreFlightRouter is
         address          receiver,
         uint256          deadline,
         bool             feeOnTransfer,
+        uint256          nftTokenId,
         bool             allowSoftRisk,
         ExecutionPolicy calldata policy
     )
@@ -454,221 +526,263 @@ contract PreFlightRouter is
         nonReentrant
         returns (uint256 amountOut)
     {
-        require(amountIn > 0,          "ZERO_AMOUNT");
-        require(path.length >= 2,      "PATH_TOO_SHORT");
+        require(amountIn > 0,           "ZERO_AMOUNT");
+        require(path.length >= 2,       "PATH_TOO_SHORT");
         require(receiver != address(0), "ZERO_RECEIVER");
-        require(trustedRouters[router], "UNTRUSTED_ROUTER");
+        require(trustedRouters[router],  "UNTRUSTED_ROUTER");
+        _requireNFTPending(nftTokenId, msg.sender);
 
-        // ── Re-run guard (amountIn passed so guard can compute real impact) ──
-        SwapGuardResult memory result =
-            swapGuard.swapCheckV2(router, path, amountIn);
+        // Validate swap state unchanged since storeSwapCheck.
+        swapGuard.validateSwapFor(router, path, amountIn, msg.sender);
 
-        // ── Apply policy ──────────────────────────────────────────────────
+        // Fetch current result for policy.
+        SwapGuardResult memory result = swapGuard.swapCheckV2(router, path, amountIn);
         _enforceSwapPolicy(result, policy, allowSoftRisk);
 
-        // ── Pull tokenIn from caller ──────────────────────────────────────
+        // Pull tokenIn.
         IERC20 tokenIn = IERC20(path[0]);
         tokenIn.safeTransferFrom(msg.sender, address(this), amountIn);
         tokenIn.forceApprove(router, amountIn);
 
-        // ── Execute swap ──────────────────────────────────────────────────
+        // Execute swap.
         if (feeOnTransfer) {
-            // Fee-on-transfer variant doesn't return amounts array.
-            // Capture output by reading receiver's balance delta.
             IERC20 tokenOut = IERC20(path[path.length - 1]);
             uint256 balBefore = tokenOut.balanceOf(receiver);
-
             IUniswapV2Router(router)
                 .swapExactTokensForTokensSupportingFeeOnTransferTokens(
                     amountIn, amountOutMin, path, receiver, deadline
                 );
-
-            uint256 balAfter = tokenOut.balanceOf(receiver);
-            amountOut = balAfter - balBefore;
+            amountOut = tokenOut.balanceOf(receiver) - balBefore;
         } else {
             uint256[] memory amounts = IUniswapV2Router(router)
-                .swapExactTokensForTokens(
-                    amountIn, amountOutMin, path, receiver, deadline
-                );
+                .swapExactTokensForTokens(amountIn, amountOutMin, path, receiver, deadline);
             amountOut = amounts[amounts.length - 1];
         }
 
-        // Clear residual approval
         tokenIn.forceApprove(router, 0);
 
-        emit SwapExecuted(msg.sender, router, path, amountIn, amountOut);
+        riskNFT.consume(nftTokenId);
+
+        emit SwapExecuted(msg.sender, router, path, amountIn, amountOut, nftTokenId);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        POLICY ENFORCEMENT
+                        NFT  VALIDATION  HELPER
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Enforces vault execution policy.
-     *
-     * Hardcoded critical blocks (always revert regardless of policy):
-     *   PREVIEW_REVERT         — guard itself failed, state is unknown
-     *   ZERO_SHARES_OUT        — deposit would mint nothing
-     *   ZERO_ASSETS_OUT        — redeem would return nothing
-     *   DONATION_ATTACK        — vault is in known attack state
-     *   VAULT_BALANCE_MISMATCH — vault is undercollateralised right now
-     *
-     * Everything else is governed by the caller-supplied ExecutionPolicy.
-     * If policy is zero-initialised (all false), only the hardcoded blocks apply.
-     *
-     * The `isDeposit` flag gates which zero-output check fires.
+     * @dev Ensures the NFT exists, belongs to the caller, and is still PENDING.
+     *      Reverts with clear messages to guide extension UX.
      */
+    function _requireNFTPending(uint256 tokenId, address user) internal view {
+        RiskReportNFT.RiskReport memory report = riskNFT.getReport(tokenId);
+        require(report.user == user,                                    "NFT: not your token");
+        require(report.status == RiskReportNFT.Status.PENDING,         "NFT: already consumed or expired");
+        require(report.blockNumber == block.number,                     "NFT: stale (different block)");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    POLICY  ENFORCEMENT  (pure)
+    //////////////////////////////////////////////////////////////*/
+
     function _enforceVaultPolicy(
         VaultGuardResult memory result,
         ExecutionPolicy  calldata policy,
         bool             allowSoftRisk,
         bool             isDeposit
     ) internal pure {
-        // ── Absolute hard blocks — no policy can override these ───────────
-        require(!result.PREVIEW_REVERT,       "GUARD: preview reverted");
-        require(!result.DONATION_ATTACK,      "GUARD: donation attack detected");
-        require(!result.VAULT_BALANCE_MISMATCH,"GUARD: vault undercollateralised");
+        // ── Absolute hard blocks (no policy can override) ─────────────────
+        require(!result.PREVIEW_REVERT,         "GUARD: preview reverted");
+        require(!result.DONATION_ATTACK,        "GUARD: donation attack");
+        require(!result.VAULT_BALANCE_MISMATCH, "GUARD: vault undercollateralised");
         if (isDeposit) {
-            require(!result.ZERO_SHARES_OUT,  "GUARD: deposit yields zero shares");
-            require(!result.EXCEEDS_MAX_DEPOSIT, "GUARD: exceeds vault deposit cap");
+            require(!result.ZERO_SHARES_OUT,    "GUARD: deposit yields 0 shares");
+            require(!result.EXCEEDS_MAX_DEPOSIT,"GUARD: exceeds deposit cap");
         } else {
-            require(!result.ZERO_ASSETS_OUT,  "GUARD: redeem yields zero assets");
-            require(!result.EXCEEDS_MAX_REDEEM, "GUARD: exceeds vault redeem cap");
+            require(!result.ZERO_ASSETS_OUT,    "GUARD: redeem yields 0 assets");
+            require(!result.EXCEEDS_MAX_REDEEM, "GUARD: exceeds redeem cap");
         }
 
-        // ── Policy-governed hard blocks ───────────────────────────────────
-        // Fields in order of VaultGuardResult declaration (skipping tokenResult):
-        // [0]  VAULT_NOT_WHITELISTED
-        // [1]  VAULT_ZERO_SUPPLY
-        // [2]  DONATION_ATTACK          — already handled above
-        // [3]  SHARE_INFLATION_RISK
-        // [4]  VAULT_BALANCE_MISMATCH   — already handled above
-        // [5]  EXCHANGE_RATE_ANOMALY
-        // [6]  PREVIEW_REVERT           — already handled above
-        // [7]  ZERO_SHARES_OUT          — already handled above
-        // [8]  ZERO_ASSETS_OUT          — already handled above
-        // [9]  DUST_SHARES
-        // [10] DUST_ASSETS
-        // [11] EXCEEDS_MAX_DEPOSIT      — already handled above
-        // [12] EXCEEDS_MAX_REDEEM       — already handled above
-        // [13] PREVIEW_CONVERT_MISMATCH
-
+        // ── Policy-governed flags ─────────────────────────────────────────
         bool[14] memory flags = _vaultFlagsToArray(result);
-
         for (uint256 i = 0; i < 14; ) {
-            if (!flags[i]) { unchecked { ++i; } continue; }
-            if (policy.hardBlockVault[i]) {
-                revert("GUARD: vault hard block by policy");
-            }
-            if (!allowSoftRisk && policy.softWarnVault[i]) {
-                revert("GUARD: vault soft risk (set allowSoftRisk)");
+            if (flags[i]) {
+                if (policy.hardBlockVault[i]) revert("GUARD: vault hard block (policy)");
+                if (!allowSoftRisk && policy.softWarnVault[i]) revert("GUARD: vault soft warn (policy)");
             }
             unchecked { ++i; }
         }
     }
 
-    /**
-     * @dev Enforces swap execution policy.
-     *
-     * Hardcoded critical blocks:
-     *   POOL_NOT_EXISTS       — nothing to swap against
-     *   ZERO_LIQUIDITY        — pool is empty
-     *   DUPLICATE_TOKEN_IN_PATH — circular / malformed path
-     *   K_INVARIANT_BROKEN    — pool was drained abnormally
-     *   PRICE_MANIPULATED     — TWAP deviation detected
-     */
     function _enforceSwapPolicy(
         SwapGuardResult memory result,
         ExecutionPolicy calldata policy,
         bool            allowSoftRisk
     ) internal pure {
         // ── Absolute hard blocks ──────────────────────────────────────────
-        require(!result.POOL_NOT_EXISTS,          "GUARD: pool does not exist");
-        require(!result.ZERO_LIQUIDITY,           "GUARD: pool has zero liquidity");
-        require(!result.DUPLICATE_TOKEN_IN_PATH,  "GUARD: circular/duplicate path");
-        require(!result.K_INVARIANT_BROKEN,       "GUARD: pool k-invariant broken");
-        require(!result.PRICE_MANIPULATED,        "GUARD: price manipulation detected");
+        require(!result.POOL_NOT_EXISTS,         "GUARD: pool not exist");
+        require(!result.ZERO_LIQUIDITY,          "GUARD: zero liquidity");
+        require(!result.DUPLICATE_TOKEN_IN_PATH, "GUARD: duplicate path");
+        require(!result.K_INVARIANT_BROKEN,      "GUARD: k-invariant broken");
+        require(!result.PRICE_MANIPULATED,       "GUARD: price manipulated");
 
-        // ── Policy-governed blocks ────────────────────────────────────────
-        // Fields in order of SwapGuardResult declaration:
-        // [0]  DEEP_MULTIHOP
-        // [1]  DUPLICATE_TOKEN_IN_PATH  — handled above
-        // [2]  POOL_NOT_EXISTS          — handled above
-        // [3]  FACTORY_MISMATCH
-        // [4]  ZERO_LIQUIDITY           — handled above
-        // [5]  LOW_LIQUIDITY
-        // [6]  LOW_LP_SUPPLY
-        // [7]  POOL_TOO_NEW
-        // [8]  SEVERE_IMBALANCE
-        // [9]  K_INVARIANT_BROKEN       — handled above
-        // [10] HIGH_SWAP_IMPACT
-        // [11] FLASHLOAN_RISK
-        // [12] PRICE_MANIPULATED        — handled above
-
+        // ── Policy-governed flags ─────────────────────────────────────────
         bool[13] memory flags = _swapFlagsToArray(result);
-
         for (uint256 i = 0; i < 13; ) {
-            if (!flags[i]) { unchecked { ++i; } continue; }
-            if (policy.hardBlockSwap[i]) {
-                revert("GUARD: swap hard block by policy");
-            }
-            if (!allowSoftRisk && policy.softWarnSwap[i]) {
-                revert("GUARD: swap soft risk (set allowSoftRisk)");
+            if (flags[i]) {
+                if (policy.hardBlockSwap[i]) revert("GUARD: swap hard block (policy)");
+                if (!allowSoftRisk && policy.softWarnSwap[i]) revert("GUARD: swap soft warn (policy)");
             }
             unchecked { ++i; }
         }
     }
 
     /*//////////////////////////////////////////////////////////////
-            DEFAULT CRITICAL FLAG CHECKS (used by simulate*)
+                RISK  LEVEL  COMPUTATION  (pure)
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Returns true if the vault result has any flag that the default policy blocks.
-    function _vaultHasCritical(VaultGuardResult memory r, bool isDeposit)
+    function _computeVaultRisk(VaultGuardResult memory r)
         internal
         pure
-        returns (bool)
+        returns (RiskReportNFT.RiskLevel)
     {
-        if (r.PREVIEW_REVERT)        return true;
-        if (r.DONATION_ATTACK)       return true;
-        if (r.VAULT_BALANCE_MISMATCH) return true;
-        if (isDeposit) {
-            if (r.ZERO_SHARES_OUT)     return true;
-            if (r.EXCEEDS_MAX_DEPOSIT) return true;
-        } else {
-            if (r.ZERO_ASSETS_OUT)     return true;
-            if (r.EXCEEDS_MAX_REDEEM)  return true;
-        }
-        return false;
+        // Critical: any absolute hard-block flag
+        if (r.PREVIEW_REVERT || r.DONATION_ATTACK || r.VAULT_BALANCE_MISMATCH ||
+            r.ZERO_SHARES_OUT || r.ZERO_ASSETS_OUT || r.EXCEEDS_MAX_DEPOSIT || r.EXCEEDS_MAX_REDEEM)
+            return RiskReportNFT.RiskLevel.CRITICAL;
+
+        // Warning: any notable soft flag
+        if (r.VAULT_NOT_WHITELISTED || r.SHARE_INFLATION_RISK || r.EXCHANGE_RATE_ANOMALY ||
+            r.PREVIEW_CONVERT_MISMATCH || r.VAULT_ZERO_SUPPLY || r.DUST_SHARES || r.DUST_ASSETS)
+            return RiskReportNFT.RiskLevel.WARNING;
+
+        return RiskReportNFT.RiskLevel.SAFE;
     }
 
-    /// @dev Returns true if the swap result has any flag that the default policy blocks.
-    function _swapHasCritical(SwapGuardResult memory r)
+    function _computeSwapRisk(SwapGuardResult memory r)
         internal
         pure
-        returns (bool)
+        returns (RiskReportNFT.RiskLevel)
     {
-        return (
-            r.POOL_NOT_EXISTS         ||
-            r.ZERO_LIQUIDITY          ||
-            r.DUPLICATE_TOKEN_IN_PATH ||
-            r.K_INVARIANT_BROKEN      ||
-            r.PRICE_MANIPULATED
-        );
+        // Critical
+        if (r.POOL_NOT_EXISTS || r.ZERO_LIQUIDITY || r.DUPLICATE_TOKEN_IN_PATH ||
+            r.K_INVARIANT_BROKEN || r.PRICE_MANIPULATED)
+            return RiskReportNFT.RiskLevel.CRITICAL;
+
+        // Warning
+        if (r.DEEP_MULTIHOP || r.FACTORY_MISMATCH || r.LOW_LIQUIDITY || r.LOW_LP_SUPPLY ||
+            r.POOL_TOO_NEW || r.SEVERE_IMBALANCE || r.HIGH_SWAP_IMPACT || r.FLASHLOAN_RISK)
+            return RiskReportNFT.RiskLevel.WARNING;
+
+        return RiskReportNFT.RiskLevel.SAFE;
     }
 
     /*//////////////////////////////////////////////////////////////
-                   FLAG → ARRAY HELPERS (for policy loops)
+            DEFAULT  POLICY  VIEWS  (for extension config)
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @dev Converts VaultGuardResult to a bool[14] for policy iteration.
-     *      Order MUST match ExecutionPolicy.hardBlockVault / softWarnVault indices.
-     */
+    function defaultVaultHardBlocks() external pure returns (bool[14] memory h) {
+        // Indices: 2=DONATION_ATTACK, 4=BALANCE_MISMATCH, 6=PREVIEW_REVERT,
+        //          7=ZERO_SHARES, 8=ZERO_ASSETS, 11=EXCEEDS_DEPOSIT, 12=EXCEEDS_REDEEM
+        h[2] = true; h[4] = true; h[6] = true; h[7] = true;
+        h[8] = true; h[11] = true; h[12] = true;
+    }
+
+    function defaultSwapHardBlocks() external pure returns (bool[13] memory h) {
+        // 1=DUPLICATE, 2=NO_POOL, 4=ZERO_LIQ, 9=K_BROKEN, 12=PRICE_MANIP
+        h[1] = true; h[2] = true; h[4] = true; h[9] = true; h[12] = true;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                FLAG  PACKING  &  COUNTING  (pure)
+    //////////////////////////////////////////////////////////////*/
+
+    function _packVaultFlags(VaultGuardResult memory r)
+        internal pure returns (uint32 packed)
+    {
+        bool[14] memory f = _vaultFlagsToArray(r);
+        for (uint8 i = 0; i < 14; ) {
+            if (f[i]) packed |= uint32(1) << i;
+            unchecked { ++i; }
+        }
+    }
+
+    function _packSwapFlags(SwapGuardResult memory r)
+        internal pure returns (uint32 packed)
+    {
+        bool[13] memory f = _swapFlagsToArray(r);
+        for (uint8 i = 0; i < 13; ) {
+            if (f[i]) packed |= uint32(1) << i;
+            unchecked { ++i; }
+        }
+    }
+
+    function _countVaultFlags(VaultGuardResult memory r, bool isDeposit)
+        internal pure returns (uint8 crit, uint8 soft)
+    {
+        // Critical indices: 2,4,6,7(deposit),8(redeem),11(deposit),12(redeem)
+        if (r.DONATION_ATTACK)        crit++;
+        if (r.VAULT_BALANCE_MISMATCH) crit++;
+        if (r.PREVIEW_REVERT)         crit++;
+        if (isDeposit) {
+            if (r.ZERO_SHARES_OUT)    crit++;
+            if (r.EXCEEDS_MAX_DEPOSIT) crit++;
+        } else {
+            if (r.ZERO_ASSETS_OUT)    crit++;
+            if (r.EXCEEDS_MAX_REDEEM) crit++;
+        }
+        // Soft
+        if (r.VAULT_NOT_WHITELISTED)    soft++;
+        if (r.VAULT_ZERO_SUPPLY)         soft++;
+        if (r.SHARE_INFLATION_RISK)      soft++;
+        if (r.EXCHANGE_RATE_ANOMALY)     soft++;
+        if (r.DUST_SHARES)               soft++;
+        if (r.DUST_ASSETS)               soft++;
+        if (r.PREVIEW_CONVERT_MISMATCH)  soft++;
+    }
+
+    function _countSwapFlags(SwapGuardResult memory r)
+        internal pure returns (uint8 crit, uint8 soft)
+    {
+        if (r.POOL_NOT_EXISTS)          crit++;
+        if (r.ZERO_LIQUIDITY)           crit++;
+        if (r.DUPLICATE_TOKEN_IN_PATH)  crit++;
+        if (r.K_INVARIANT_BROKEN)       crit++;
+        if (r.PRICE_MANIPULATED)        crit++;
+
+        if (r.DEEP_MULTIHOP)     soft++;
+        if (r.FACTORY_MISMATCH)  soft++;
+        if (r.LOW_LIQUIDITY)     soft++;
+        if (r.LOW_LP_SUPPLY)     soft++;
+        if (r.POOL_TOO_NEW)      soft++;
+        if (r.SEVERE_IMBALANCE)  soft++;
+        if (r.HIGH_SWAP_IMPACT)  soft++;
+        if (r.FLASHLOAN_RISK)    soft++;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                DEFAULT  CRITICAL  HELPERS  (pure)
+    //////////////////////////////////////////////////////////////*/
+
+    function _vaultHasCritical(VaultGuardResult memory r, bool isDeposit)
+        internal pure returns (bool)
+    {
+        if (r.PREVIEW_REVERT || r.DONATION_ATTACK || r.VAULT_BALANCE_MISMATCH) return true;
+        if (isDeposit) return r.ZERO_SHARES_OUT || r.EXCEEDS_MAX_DEPOSIT;
+        return r.ZERO_ASSETS_OUT || r.EXCEEDS_MAX_REDEEM;
+    }
+
+    function _swapHasCritical(SwapGuardResult memory r) internal pure returns (bool) {
+        return r.POOL_NOT_EXISTS || r.ZERO_LIQUIDITY || r.DUPLICATE_TOKEN_IN_PATH
+            || r.K_INVARIANT_BROKEN || r.PRICE_MANIPULATED;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+            FLAG → ARRAY  (ordering must match policy indices)
+    //////////////////////////////////////////////////////////////*/
+
     function _vaultFlagsToArray(VaultGuardResult memory r)
-        internal
-        pure
-        returns (bool[14] memory f)
+        internal pure returns (bool[14] memory f)
     {
         f[0]  = r.VAULT_NOT_WHITELISTED;
         f[1]  = r.VAULT_ZERO_SUPPLY;
@@ -686,14 +800,8 @@ contract PreFlightRouter is
         f[13] = r.PREVIEW_CONVERT_MISMATCH;
     }
 
-    /**
-     * @dev Converts SwapGuardResult to a bool[13] for policy iteration.
-     *      Order MUST match ExecutionPolicy.hardBlockSwap / softWarnSwap indices.
-     */
     function _swapFlagsToArray(SwapGuardResult memory r)
-        internal
-        pure
-        returns (bool[13] memory f)
+        internal pure returns (bool[13] memory f)
     {
         f[0]  = r.DEEP_MULTIHOP;
         f[1]  = r.DUPLICATE_TOKEN_IN_PATH;
@@ -711,51 +819,7 @@ contract PreFlightRouter is
     }
 
     /*//////////////////////////////////////////////////////////////
-                           VIEW HELPERS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Returns the default critical policy for a vault op.
-     *         Useful for the extension to know what will hard-block without deploying a call.
-     * @return hardBlock bool[14] where true = this flag index always reverts
-     */
-    function defaultVaultHardBlocks()
-        external
-        pure
-        returns (bool[14] memory hardBlock)
-    {
-        // Indices that are always blocked (see _enforceVaultPolicy):
-        // 2 = DONATION_ATTACK, 4 = VAULT_BALANCE_MISMATCH, 6 = PREVIEW_REVERT,
-        // 7 = ZERO_SHARES_OUT, 8 = ZERO_ASSETS_OUT, 11 = EXCEEDS_MAX_DEPOSIT, 12 = EXCEEDS_MAX_REDEEM
-        hardBlock[2]  = true;
-        hardBlock[4]  = true;
-        hardBlock[6]  = true;
-        hardBlock[7]  = true;
-        hardBlock[8]  = true;
-        hardBlock[11] = true;
-        hardBlock[12] = true;
-    }
-
-    /**
-     * @notice Returns the default critical policy for a swap op.
-     * @return hardBlock bool[13] where true = this flag index always reverts
-     */
-    function defaultSwapHardBlocks()
-        external
-        pure
-        returns (bool[13] memory hardBlock)
-    {
-        // 1 = DUPLICATE_TOKEN, 2 = POOL_NOT_EXISTS, 4 = ZERO_LIQUIDITY,
-        // 9 = K_INVARIANT_BROKEN, 12 = PRICE_MANIPULATED
-        hardBlock[1]  = true;
-        hardBlock[2]  = true;
-        hardBlock[4]  = true;
-        hardBlock[9]  = true;
-        hardBlock[12] = true;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                               ADMIN
+                                ADMIN
     //////////////////////////////////////////////////////////////*/
 
     function setVaultGuard(address addr) external onlyOwner {
@@ -768,6 +832,12 @@ contract PreFlightRouter is
         require(addr != address(0), "ZERO_ADDRESS");
         swapGuard = ISwapV2Guard(addr);
         emit GuardsUpdated(address(vaultGuard), addr);
+    }
+
+    function setRiskNFT(address addr) external onlyOwner {
+        require(addr != address(0), "ZERO_ADDRESS");
+        riskNFT = RiskReportNFT(addr);
+        emit NFTUpdated(addr);
     }
 
     function setTrustedRouter(address router, bool trusted) external onlyOwner {
@@ -786,11 +856,7 @@ contract PreFlightRouter is
         }
     }
 
-    /**
-     * @notice Emergency token recovery for any tokens accidentally stuck in this contract.
-     * @dev This contract should never hold user funds at rest — any residual balance
-     *      is either a failed mid-tx state or a direct mistaken transfer.
-     */
+    /// @notice Emergency token recovery for funds accidentally stuck in this contract.
     function rescueERC20(address token, address to, uint256 amount) external onlyOwner {
         require(to != address(0), "ZERO_ADDRESS");
         IERC20(token).safeTransfer(to, amount);
