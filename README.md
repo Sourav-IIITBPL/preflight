@@ -1,52 +1,9 @@
-# preflight
-Pre-transaction security layer for Arbitrum DeFi
-
-```
-preflight/
-├── contracts/
-│   ├── PreFlightRouter.sol
-│   ├── ProtocolRegistry.sol
-│   ├── Policy.sol
-│   ├── guards/
-│   │   ├── BaseGuard.sol
-│   │   ├── SwapGuard.sol
-│   │   ├── LiquidityGuard.sol
-│   │   └── VaultGuard.sol
-│   ├── adapters/
-│   │   ├── UniswapAdapter.sol
-│   │   └── ERC4626Adapter.sol
-│   └── reports/
-│       ├── ReportRegistry.sol
-│       └── RiskReportNFT.sol
-├── backend/
-│   ├── simulateTx.js
-│   ├── traceAnalyzer.js
-│   ├── decisionEngine.js
-│   ├── reportStore.js
-│   └── server.js
-├── frontend/
-│   ├── src/
-│   │   ├── pages/
-│   │   ├── components/
-│   │   └── services/
-│   └── App.js
-├── test/
-│   ├── unit/
-│   └── fork/
-├── docs/
-│   ├── THREAT_MODEL.md
-│   ├── INVARIANTS.md
-│   └── DESIGN.md
-
-
-```
-
 
 # PreFlight — the Zero-Trust DeFi Firewall for Arbitrum
 
 ---
 
-## 1) Project description (short & punchy)
+## 1) Project description 
 
 **Name:** PreFlight — the Zero-Trust DeFi Firewall for Arbitrum  
 
@@ -297,29 +254,10 @@ contracts/ReportRegistry.sol
 3. Support SBT and transferable badges
 4. Require explicit user consent
 
----
-
-## Full list of concrete signals + reason codes
-
-- R001 — NON_CANONICAL_ROUTER  
-- R002 — TWAP_DEV_EXCEEDS_THRESHOLD  
-- R003 — RESERVE_DELTA_FLASH_LOAN_LIKELY  
-- R004 — TOKEN_MINTABLE_DETECTED  
-- R005 — TOKEN_OWNER_HIGH_CONCENTRATION  
-- R006 — CONTRACT_UNVERIFIED  
-- R007 — DELEGATECALL_TO_UNKNOWN  
-- R008 — SELFDESTRUCT_OCCURRED  
-- R009 — TRANSFER_TO_THIRD_PARTY  
-- R010 — EXCHANGE_RATE_SPIKE_DETECTED  
-- R011 — FEE_ON_TRANSFER_DETECTED  
-
-This makes the UI consistent and NFT metadata machine-readable.
 
 ---
 
-## 4) Frontend / Backend / Extensions — design & implementation detail
-
-### Frontend (React recommended)
+### Frontend 
 
 **Goals:** present the exact security state and let user choose to proceed.
 
@@ -373,18 +311,7 @@ This makes the UI consistent and NFT metadata machine-readable.
 
 ---
 
-## APIs (compact)
-
-- GET /api/guards/:action  
-- POST /api/simulate  
-- POST /api/report  
-- POST /api/mint  
-- GET /api/registry  
-- POST /api/feedback  
-
----
-
-## 5) Risk report & NFT design (format, fields, incentives)
+## 5) Risk report & NFT design
 
 ### Two NFT variants
 
