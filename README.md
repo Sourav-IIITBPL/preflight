@@ -359,12 +359,12 @@ cd backend && cp .env.example .env && npm run dev
 
 ---
 
+## Project Status — Under Active Development
 
 ## License
 
 MIT © PreFlight Contributors
 
----
 
 <div align="center">
 
@@ -373,7 +373,5 @@ MIT © PreFlight Contributors
 *PreFlight — Trust the math, not the preview.*
 
 </div>
-|
 
----
 
