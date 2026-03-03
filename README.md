@@ -51,7 +51,7 @@ Unlike price previews or slippage warnings, PreFlight:
 - Verifies accounting invariants
 - Detects manipulation patterns
 - Enforces explainable security policy
-```
+```js
 [ User Signs Intent ] ──► [ PreFlight Verification ] ──► [ Execute on Arbitrum ]
                                       ↕
                             Guards + CRE Simulation
@@ -131,7 +131,7 @@ flowchart LR
 
 ## System Layers
 
-```
+```js
 ┌──────────────────────────┐
 │        Frontend          │
 │  - Intent Builder        │
