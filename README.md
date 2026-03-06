@@ -1,399 +1,386 @@
-# preflight
-Pre-transaction security layer for Arbitrum DeFi
+<div align="center">
 
+# 🛡️ PreFlight
+
+**Zero-Trust Pre-Transaction Firewall for Arbitrum DeFi**
+
+*Verify before you execute. Trust nothing. Simulate everything.*
+
+<br/>
+
+[![Arbitrum](https://img.shields.io/badge/Chain-Arbitrum-28A0F0?style=for-the-badge&logo=arbitrum&logoColor=white)](https://arbitrum.io)
+[![Chainlink CRE](https://img.shields.io/badge/Chainlink-CRE_Simulation-375BD2?style=for-the-badge&logo=chainlink&logoColor=white)](https://chain.link)
+[![Chainlink Automation](https://img.shields.io/badge/Chainlink-Automation-375BD2?style=for-the-badge&logo=chainlink&logoColor=white)](https://automation.chain.link)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.x-363636?style=for-the-badge&logo=solidity&logoColor=white)](https://soliditylang.org)
+[![Foundry](https://img.shields.io/badge/Tests-Foundry-F05032?style=for-the-badge)](https://book.getfoundry.sh)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
+
+<br/>
+
+> Built for the **Arbitrium Infrastructure** — using Chainlink CRE for off-chain fork simulation and Chainlink Automation for real-time TWAP maintenance.
+
+</div>
+
+---
+
+## Table of Contents
+
+- [🛡️ PreFlight](#️-preflight)
+  - [Table of Contents](#table-of-contents)
+  - [What is PreFlight?](#what-is-preflight)
+  - [The Problem](#the-problem)
+  - [Core Abstraction](#core-abstraction)
+- [Architecture](#architecture)
+  - [System Layers](#system-layers)
+  - [How It Works](#how-it-works)
+  - [Chainlink Integration](#chainlink-integration)
+    - [Chainlink CRE — Off-Chain Transaction Simulation](#chainlink-cre--off-chain-transaction-simulation)
+    - [Chainlink Automation — Real-Time TWAP Maintenance](#chainlink-automation--real-time-twap-maintenance)
+  - [Security Modules](#security-modules)
+    - [SwapV2Guard](#swapv2guard)
+    - [LiquidityGuard](#liquidityguard)
+    - [VaultGuard (ERC-4626)](#vaultguard-erc-4626)
+  - [Risk Reports \& Soulbound NFT](#risk-reports--soulbound-nft)
+  - [Design Principles](#design-principles)
+  - [Getting Started](#getting-started)
+  - [Project Status — Under Active Development](#project-status--under-active-development)
+  - [License](#license)
+---
+
+## What is PreFlight?
+
+**PreFlight is a transaction-level integrity firewall that runs before your DeFi transaction executes.**
+
+It is not a price oracle, or a monitoring dashboard. It is a **pre-execution verifier**: given exact calldata, exact block state, and exact user intent — it tells you whether that transaction is safe to submit. Every decision is explainable, reproducible, and backed by on-chain evidence.
+
+Unlike price previews or slippage warnings, PreFlight:
+
+- Executes the inbuilt on-chain guards
+- Simulates the exact calldata
+- Analyzes the execution trace
+- Verifies accounting invariants
+- Detects manipulation patterns
+- Enforces explainable security policy
+```js
+[ User Signs Intent ] ──► [ PreFlight Verification ] ──► [ Execute on Arbitrum ]
+                                      ↕
+                            Guards + CRE Simulation
+                            + Trace Analysis + Policy
 ```
-preflight/
-├── contracts/
-│   ├── PreFlightRouter.sol
-│   ├── ProtocolRegistry.sol
-│   ├── Policy.sol
-│   ├── guards/
-│   │   ├── BaseGuard.sol
-│   │   ├── SwapGuard.sol
-│   │   ├── LiquidityGuard.sol
-│   │   └── VaultGuard.sol
-│   ├── adapters/
-│   │   ├── UniswapAdapter.sol
-│   │   └── ERC4626Adapter.sol
-│   └── reports/
-│       ├── ReportRegistry.sol
-│       └── RiskReportNFT.sol
-├── backend/
-│   ├── simulateTx.js
-│   ├── traceAnalyzer.js
-│   ├── decisionEngine.js
-│   ├── reportStore.js
-│   └── server.js
-├── frontend/
-│   ├── src/
-│   │   ├── pages/
-│   │   ├── components/
-│   │   └── services/
-│   └── App.js
-├── test/
-│   ├── unit/
-│   └── fork/
-├── docs/
-│   ├── THREAT_MODEL.md
-│   ├── INVARIANTS.md
-│   └── DESIGN.md
 
+---
 
+## The Problem
+
+Users lose funds even when:
+
+- UI preview looks correct  
+- Slippage is reasonable  
+- Protocol is audited  
+- MEV protection is enabled  
+
+Because:
+- Flash-loan manipulation distorts state  
+- Routers use hidden delegatecalls  
+- Vault exchange rates are manipulated  
+- Internal calls redirect funds
+- Runtime state manipulation
+
+** Existing tools only check math — not execution**  
+***PreFlight checks execution integrity.***
+
+PreFlight fills this gap. It operates between **sign** and **execute** — the only window these tools leave unguarded.
+
+```js
+[ Sign Transaction ] → [ PreFlight Verification ] → [ Execute ]
 ```
 
+---
 
-# PreFlight — the Zero-Trust DeFi Firewall for Arbitrum
+## Core Abstraction
+
+A transaction is safe **if and only if**:
+
+> *The observable on-chain state, execution trace, and accounting invariants match the user's intent within defined risk bounds.*
+
+PreFlight enforces this across three independent layers:
+
+| Layer | What It Verifies | How |
+|---|---|---|
+| **State Integrity** | On-chain state is not manipulated | Deterministic `view`-only Guard contracts |
+| **Execution Integrity** | What *will* happen when the tx runs | Chainlink CRE forks Arbitrum and simulates |
+| **Accounting Integrity** | Balance deltas match intent | Trace analysis + invariant math |
 
 ---
 
-## 1) Project description (short & punchy)
 
-**Name:** PreFlight — the Zero-Trust DeFi Firewall for Arbitrum  
+# Architecture
 
-**What it is:**  
-A protocol-aware, transaction-level security gateway that runs deterministic, auditable on-chain checks (Guards) and deeper off-chain transaction simulations to detect exploitation patterns before a user’s transaction is executed.
+PreFlight enforces strict separation of concerns.
 
-**What it does:**  
-For four user actions — swap, add liquidity, remove liquidity, and vault deposit/withdraw — PreFlight performs multi-signal verification and either  
-(a) reverts malicious/very high-confidence transactions on-chain, or  
-(b) provides a detailed risk report and “do you still want to proceed?” UX for ambiguous cases.
+```mermaid
+flowchart LR
+    UI[Frontend / Extension] --> Router[PreFlightRouter]
 
-**Problem it solves:**  
-Pre-transaction, real-time protection from flash-loan manipulation, donation/inflation attacks, token-mint/ownership rug pulls, tax/fee tokens, reentrancy/hidden drains, MEV sandwich and liquidity JIT attacks — all of which are not captured by standard price previews and slippage warnings.
+    Router --> Guards[On-Chain Guards]
+    Guards --> Policy
 
----
+    Router --> CRE[Chainlink CRE]
+    CRE --> Trace[Trace Analyzer]
+    Trace --> Policy
 
-## 2) How it works — end-to-end
+    Policy --> Decision{Decision}
+    Decision -->|Abort| Stop[Block]
+    Decision -->|Confirm| Confirm[User Confirm]
+    Decision -->|Allow| Execute[Execute Protocol Call]
 
-### High level flow
-
-#### 1. User intent (UI / extension / dApp)
-- User prepares an action (swap / add / remove / deposit / withdraw).
-- Wallet signs a meta intent or the UI routes through ArbSentinelRouter.
-
-#### 2. Pre-check: on-chain Guards (fast & deterministic)
-- Router calls relevant view functions in Guard contracts (SwapGuard, LiquidityGuard, VaultGuard).
-- These run cheap checks against on-chain state:
-  - reserves  
-  - TWAP  
-  - owner flags  
-  - totalAssets / totalSupply  
-  - token metadata  
-  - EOA vs contract  
-  - verification status  
-
-#### 3. Decision branch
-- If on-chain checks indicate **HIGH RISK** (high-confidence patterns):  
-  - revert the transaction immediately (Router reverts).
-- Else if medium / ambiguous risk:  
-  - continue to off-chain simulation.
-- Else:  
-  - pass and proceed to execution adapter (direct call to protocol).
-
-#### 4. Deep X-Ray Off-chain Simulation (fork + trace)
-- Off-chain service (your backend) forks chain state at the current block.
-- Performs eth_call or Tenderly-style simulation of the transaction.
-- Inspects the execution trace and guard heuristics.
-- Produces an interpretable reason stack and numeric safety score (0–100).
-
-#### 5. Final UX
-- UI shows:
-  - Safety Score  
-  - human readable reasons  
-  - a minimal reproduction script  
-  - options: Cancel / Proceed (with explicit confirmation)
-- For passes, the router executes the action.
-- For high-risk cases, the router prevents it.
-
-### Why this beats price previews & slippage
-- Price preview only computes expected token output given current state — it cannot detect *why* a preview is correct.
-- PreFlight uses state, oracle history (TWAP), contract code signals, ownership and mintability checks, and an execution trace.
-- Slippage settings are static and cannot stop malicious internal transfers, taxes, or delegatecalls hidden in the router.
-
-### Important design notes
-- On-chain Guards must be view-only and gas-cheap.
-- Heavy heuristics and fork-based trace analysis live off-chain.
-- Use a conservative “2-of-3” confirmation before reverting on uncertain signals.
+    Policy --> NFT[RiskReportNFT]
+```
 
 ---
 
-## 3) Exhaustive checks — by module / file
+## System Layers
 
-Below is a single canonical list of checks. Implement these as on-chain view functions and corresponding off-chain checkers that run on the forked trace.  
-Each check is labeled as on-chain, off-chain simulation, or trace.
-
-NOTE: thresholds are provided as sensible defaults. Tune these with production dataset.
-
----
-
-## Cross-cutting checks (applies to all actions)
-
-- **Canonical contract verification**
-  - On-chain: check address against trusted registry (on-chain or backend whitelist).
-  - Off-chain: check verification status, compiler version, source, and creation transaction.
-
-- **Unverified contract flag**
-  - Off-chain: raise high risk for unverified code.
-
-- **Delegatecall / callcode usage**
-  - Trace: DELEGATECALL invoked with unknown target → HIGH RISK.
-
-- **SelfDestruct in call path**
-  - Trace: SELFDESTRUCT observed → HIGH RISK.
-
-- **tx.origin usage**
-  - Static analysis via trace or verified source.
-
-- **Third-party transfer of user funds**
-  - Trace: internal transfer to address not equal to router or expected destination → HIGH RISK.
-
-- **Ownership or admin hooks during action**
-  - Trace / on-chain: ownership-only function called → HIGH RISK.
-
-- **Token decimal mismatch & rounding**
-  - On-chain decimal sanity check.
-  - Off-chain rounding loss simulation.
-
-- **Fee-on-transfer or tax tokens**
-  - Off-chain: simulate transfer and compare received amount.
-
-- **Reentrancy pattern**
-  - Trace: repeated balance modification mid-flow.
-
-- **Mintable or pausable token**
-  - On-chain: inspect ABI for mint, pause, blacklist functions.
-
-- **Token age**
-  - Off-chain: age < 7 days → warning.
-
-- **Ownership concentration**
-  - Off-chain: top holders exceed threshold → elevated risk.
-
-- **New LP pair**
-  - On-chain: pair created < 1000 blocks → warning.
-
-- **Minimal liquidity**
-  - On-chain: TVL < $50k → high risk for large trades.
+```js
+┌──────────────────────────┐
+│        Frontend          │
+│  - Intent Builder        │
+│  - Risk Visualization    │
+└─────────────┬────────────┘
+              │
+┌─────────────▼────────────┐
+│     PreFlightRouter      │
+└─────────────┬────────────┘
+              │
+┌─────────────▼────────────┐
+│    On-Chain Guards       │
+│  - SwapV2Guard           │
+│  - LiquidityGuard        │
+│  - VaultGuard            │
+└─────────────┬────────────┘
+              │
+┌─────────────▼────────────┐
+│     Chainlink CRE        │
+│  - Fork block            │
+│  - Execute calldata      │
+│  - Capture trace         │
+└─────────────┬────────────┘
+              │
+┌─────────────▼────────────┐
+│        Policy.sol        │
+│  - Signal aggregation    │
+│  - Severity evaluation   │
+│  - Decision logic        │
+└─────────────┬────────────┘
+              │
+        Execute / Abort
+              │
+        RiskReportNFT
+```
 
 ---
 
-## Module: SwapGuard (swap)
+## How It Works
 
-**Files:**  
-guards/SwapGuard.sol  
-adapters/UniswapAdapter.sol  
-backend/swapChecks.js  
+PreFlight enforces **transaction-level integrity verification** in four structured stages:
 
-### On-chain view checks
-1. isCanonicalRouter(address router)
-2. spotVsTwap(poolAddr, window)
-   - Stable pools: >0.5% warning, >1% block
-   - Major pools: >2% warning, >5% block
-   - Low TVL: >1% warning
-3. reserveDeltaSinceLastBlock(poolAddr)
-4. minLiquidityCheck(poolAddr, expectedAmount)
-5. tokenHasMintOrOwner(token)
-6. tokenDecimalsCheck(token)
-7. isStablePair(poolAddr)
+```mermaid
+flowchart TD
+    A([👤 User Intent]) --> B[PreFlightRouter]
 
-### Off-chain simulation & trace checks
-8. Simulated vs quoted output comparison
-9. Delegatecall or unknown call detection
-10. Tax / fee detection
-11. Third-party transfer detection
-12. Sandwich & MEV heuristic
-13. Slippage anomaly detection
+    B --> C[On-Chain Guards<br/>SwapV2Guard / LiquidityGuard / VaultGuard]
+    C -->|Structured Signals| P[Policy.sol]
 
----
+    P --> D[Chainlink CRE Simulation]
+    D --> E[Trace Analysis]
+    E -->|Structured Signals| P
 
-## Module: LiquidityGuards (add / remove liquidity)
+    P --> F{Final Aggregation}
 
-**Files:**  
-guards/LiquidityGuard.sol  
-adapters/AMMAdapter.sol  
-backend/liquidityChecks.js  
+    F -->|CRITICAL| X([⛔ Abort])
+    F -->|WARN| G([⚠️ User Confirmation])
+    F -->|PASS| H([✅ Execute Transaction])
 
-### Add Liquidity — on-chain
-1. tokenMintableCheck
-2. tokenOwnershipConcentration
-3. tokenAge
-4. pairCreationAge
-5. isRouterCanonical
-6. approvalFlowCheck
-7. mintEventInBlock
+    F --> R([🧾 NFT Risk Report])
 
-### Add Liquidity — off-chain / trace
-8. Simulate add-liquidity correctness
-9. New token transfer hook trap
-10. Hidden taxes & fees
+    style X fill:#ef4444,color:#fff
+    style H fill:#22c55e,color:#fff
+    style G fill:#f59e0b,color:#fff
+```
 
-### Remove Liquidity — on-chain
-11. lpShareOwnershipCheck
-12. withdrawalImpactEstimate
+**Step 1 — On-chain Guards (Fast, Deterministic):** `PreFlightRouter` calls view functions on `SwapV2Guard`, `LiquidityGuard`, and `VaultGuard`. These are cheap, `view`-only reads against live on-chain state: TWAP deviation, reserve deltas, token mintability, exchange rate spikes etc. All the warning signals generated during checks , are passed to `Policy.sol` for final aggregation.
 
-### Remove Liquidity — off-chain / trace
-13. Simulate withdrawal correctness
-14. External arbitrary call detection
+**Step 2 — Chainlink CRE Simulation (Deep Verification):** This works as an off-chain guard mechanism . After on-chain checks,  the transaction is forwarded to Chainlink CRE . CRE performs:
+1. Fork Arbitrum at the current block  
+2. Execute exact user calldata  
+3. Capture full execution trace  
+4. Compute balance deltas  
+5. Analyze invariant violations  
+
+Trace-level detections include:
+
+- `DELEGATECALL` to unknown targets  
+- `SELFDESTRUCT` in call path  
+- Unexpected third-party transfers  
+- Hidden approval escalations  
+- Accounting inconsistencies  
+- Donation / inflation patterns  
+
+All simulation-derived signals are emitted in structured format and forwarded to `Policy.sol`.
+
+**Step 3 — Decision Engine (Policy.sol):** `Policy.sol` is the single aggregation layer. It aggregates all structured signals based on severity, and confidence levels . these are then presented into a final report format — no black-box scoring.
+
+**Step 4 — NFT Risk Report (Verifiable Evidence):** The final aggregated report is presented to user in NFT form . User gets the full analyses and has the option to whether to acknowledge the risks and proceed the transaction or revert the transaction .
 
 ---
 
-## Module: VaultGuards (deposit / withdraw) — ERC-4626 focus
+## Chainlink Integration
 
-**Files:**  
-guards/VaultGuard.sol  
-adapters/ERC4626Adapter.sol  
-backend/vaultChecks.js  
+PreFlight's depth is entirely powered by Chainlink infrastructure.
 
-### Core on-chain checks
-1. exchangeRateCheck
-2. assetsBalanceMismatch
-3. totalAssetsJumpDetect
-4. isVaultVerified
-5. vaultCallsExternalAdminOnDepositWithdraw
-6. withdrawAllPathSafety
+### Chainlink CRE — Off-Chain Transaction Simulation
+```mermaid
+flowchart LR
+    A[User Calldata] --> B[Chainlink CRE Job]
+    B --> C[Fork Arbitrum @ Block N]
+    C --> D[Execute eth_call]
+    D --> E[Capture Execution Trace]
+    E --> F{Trace Analyzer}
 
-### Off-chain simulation & trace checks
-7. Simulate deposit share correctness
-8. Simulate withdraw asset correctness
-9. Liquidity mismatch replay
-10. Reentrancy pattern
+    F --> G[Internal CALLs]
+    F --> H[DELEGATECALL targets]
+    F --> I[ERC-20 transfer deltas]
+    F --> J[Storage writes]
+    F --> K[Balance snapshots]
 
----
+    G & H & I & J & K --> L[Reason Codes + Safety Score]
+```
 
-## Module: ArbSentinelRouter (orchestrator)
+Using CRE means simulation is **deterministic**, **attestable**, and not dependent on a centralized backend. Results can be referenced in on-chain decisions and embedded in NFT report metadata.
 
-**Files:**  
-contracts/ArbSentinelRouter.sol  
+### Chainlink Automation — Real-Time TWAP Maintenance
 
-### Responsibilities
-1. Accept signed user intent or direct call
-2. Invoke Guard checks and revert on fail_high
-3. Handle fail_medium via off-chain simulation or UI override
-4. Expose view functions for UIs
-5. Emit risk snapshot events
+`SwapV2Guard.spotVsTwap()` is the primary flash-loan detection mechanism. It compares spot price against a historical TWAP — which is only trustworthy if maintained by a reliable, trust-minimized keeper.
+```mermaid
+flowchart LR
+    A[Chainlink Automation Upkeep] --> B[Read AMM spot price]
+    B --> C[Append to TWAP checkpoint array]
+    C --> D[Write to on-chain storage]
+    D --> E[SwapGuard reads checkpoint]
+    E --> F{Deviation > threshold?}
+    F -- YES --> G[🚫 Flash manipulation detected]
+    F -- NO --> H[✅ Price stable — proceed]
+```
 
----
-
-## Module: Registry & Policy
-
-**Files:**  
-contracts/ProtocolRegistry.sol  
-contracts/Policy.sol  
-
-1. Canonical registry of routers, vaults, AMMs
-2. Policy contract for thresholds
-3. Event logs for reports and decisions
+Automation runs the TWAP upkeep on a per-pool configurable interval — no centralized cron job, no trust assumption.
 
 ---
 
-## Module: On-chain Evidence & NFT Minter
+## Security Modules
 
-**Files:**  
-contracts/RiskReportNFT.sol  
-contracts/ReportRegistry.sol  
+PreFlight protects four DeFi actions on Arbitrum. Each has a defined threat model, invariants, and abort conditions.
 
-1. Mint proof NFT with IPFS CID
-2. Store on-chain hash of report
-3. Support SBT and transferable badges
-4. Require explicit user consent
+### SwapV2Guard
 
----
+| Check | Layer | Abort Condition |
+|---|---|---|
+| Canonical router | On-chain | Not in registry → CRITICAL |
+| Spot vs TWAP | On-chain (Automation-fed) | >1% stable / >5% major pool → BLOCK |
+| Reserve delta | On-chain | >10% change since last block → flash loan |
+| Min liquidity | On-chain | TVL < $20k + trade > 1% TVL → BLOCK |
+| Token mintability | On-chain | Owner-mintable detected → WARN |
+| Simulated vs quoted output | CRE | Below slippage threshold → BLOCK |
+| Fee-on-transfer | CRE Trace | Received < quoted → HIGH RISK |
+| Third-party transfer | CRE Trace | Funds to unknown address → CRITICAL |
+| Delegatecall to unknown | CRE Trace | Unknown target → CRITICAL |
 
-## Full list of concrete signals + reason codes
+### LiquidityGuard
 
-- R001 — NON_CANONICAL_ROUTER  
-- R002 — TWAP_DEV_EXCEEDS_THRESHOLD  
-- R003 — RESERVE_DELTA_FLASH_LOAN_LIKELY  
-- R004 — TOKEN_MINTABLE_DETECTED  
-- R005 — TOKEN_OWNER_HIGH_CONCENTRATION  
-- R006 — CONTRACT_UNVERIFIED  
-- R007 — DELEGATECALL_TO_UNKNOWN  
-- R008 — SELFDESTRUCT_OCCURRED  
-- R009 — TRANSFER_TO_THIRD_PARTY  
-- R010 — EXCHANGE_RATE_SPIKE_DETECTED  
-- R011 — FEE_ON_TRANSFER_DETECTED  
+| Check | Layer | Abort Condition |
+|---|---|---|
+| Token mintable | On-chain | Exposes mint/owner → WARN |
+| Pair creation age | On-chain | < 1000 blocks old → WARN |
+| Canonical router | On-chain | Not whitelisted → CRITICAL |
+| Approval flow | CRE Trace | Approval to unexpected address → CRITICAL |
+| LP mint destination | Backend | LP minted to unknown address → HIGH |
+| Simulate add correctness | CRE | Tokens not credited to user → BLOCK |
+| LP transfer restriction | On-chain | Honeypot LP detected → WARN |
+| Withdrawal external calls | CRE Trace | Arbitrary call during exit → CRITICAL |
 
-This makes the UI consistent and NFT metadata machine-readable.
+### VaultGuard (ERC-4626)
 
----
-
-## 4) Frontend / Backend / Extensions — design & implementation detail
-
-### Frontend (React recommended)
-
-**Goals:** present the exact security state and let user choose to proceed.
-
-**Core pages / widgets**
-- Dashboard with quick scan
-- Action flow with preflight checks
-- Detailed report page
-- Settings
-- Developer / judge view
-
-**UX elements**
-- Clear green / amber / red states
-- Explicit override path
-- Transparent blocking reasons
-
-**Wallet integration**
-- MetaMask and WalletConnect
-- Client-mode and Router-mode
-- Simplified buildathon flow
+| Check | Layer | Abort Condition |
+|---|---|---|
+| Exchange rate delta | On-chain | >2% WARN / >10% BLOCK |
+| Assets balance mismatch | On-chain | `balanceOf ≠ totalAssets` → CRITICAL |
+| Total assets jump | On-chain | Jump without supply change → CRITICAL |
+| Admin hook on deposit | CRE Trace | Admin function fires during user flow → CRITICAL |
+| Withdraw path delegatecall | CRE Trace | Delegatecall during exit → CRITICAL |
+| Simulate deposit shares | CRE | Shares received < expected → BLOCK |
+| Reentrancy pattern | CRE Trace | Balance modified mid-flow → CRITICAL |
 
 ---
 
-## Browser extension (optional, high-impact)
+## Risk Reports & Soulbound NFT
 
-**Purpose:** intercept non-trusted router calls.
+Every scan can produce one **Soulbound NFT** — a tamper-proof, IPFS-linked proof of the pre-execution analysis. Minting is always opt-in and consent-gated.
+```mermaid
+flowchart LR
+    A[Scan Completes] --> B[Full Report JSON]
+    B --> C[Pin to IPFS → CID]
+    B --> D[SHA-256 hash → ReportRegistry.sol]
+    C & D --> E{User clicks Mint Proof}
+    E --> F[RiskReportNFT.sol mints SBT]
+    F --> G["owner: msg.sender | ipfsCID: Qm... | reportHash: bytes32 | transferable: false"]
+```
 
-**Design**
-- Inject content script
-- Query PreFlight checks
-- Modal overlay with Safety Score
-
-**Tradeoffs**
-- High impact
-- Increased build complexity
-
----
-
-## Backend (Node.js / TypeScript recommended)
-
-### Services
-1. Simulation service
-2. Registry & policy service
-3. Report store
-4. NFT minting service
-5. Analytics & telemetry
-6. Worker & queue
-
-**Datastore**
-- Postgres for metadata
-- IPFS or Arweave for reports
+One NFT per scan. Non-transferable. The report CID contains the full trace, all reason codes, and a Foundry reproduction script — making every block decision independently verifiable by auditors or judges.
 
 ---
 
-## APIs (compact)
+## Design Principles
 
-- GET /api/guards/:action  
-- POST /api/simulate  
-- POST /api/report  
-- POST /api/mint  
-- GET /api/registry  
-- POST /api/feedback  
+Every guard is `view`-only, deterministic, and maps to a canonical reason code. There are no magic scores, no auto-approvals, and no dark patterns. Heavy heuristics live in the CRE simulation layer — never on-chain.
+
+The architecture is intentionally modular: adding a new protocol requires only a new adapter. Adding a new check requires only a new guard function. Nothing else changes. Every decision is defensible to a judge, auditor, or protocol team.
+
+This is how production DeFi security infrastructure is built.
 
 ---
 
-## 5) Risk report & NFT design (format, fields, incentives)
+## Getting Started
+```bash
+# Clone and install
+git clone https://github.com/Sourav-IIITBPL/preflight && cd preflight
+forge install
 
-### Two NFT variants
+# Run unit tests
+forge test --match-path "test/unit/*" -vv
 
-1. **SBT Report (Soulbound)**  
-   Non-transferable proof of transaction scan and safety report.
+# Run Arbitrum fork tests
+ARBITRUM_RPC=<your_rpc_url> forge test --match-path "test/fork/*" --fork-url $ARBITRUM_RPC -vv
 
-2. **Badge NFT (Transferable)**  
-   Incentive badge for positive contribution.
+# Deploy to Arbitrum Sepolia
+forge script script/Deploy.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC --broadcast --verify
 
-### Why both
-- SBT for security reputation and trust
-- Badges for adoption and marketing
+# Run backend
+cd backend && cp .env.example .env && npm run dev
+```
+
+---
+
+## Project Status — Under Active Development
+
+## License
+
+MIT © PreFlight Contributors
+
+
+<div align="center">
+
+**Built with 🔗 Chainlink CRE · Chainlink Automation · Arbitrum · Foundry**
+
+*PreFlight — Trust the math, not the preview.*
+
+</div>
+
