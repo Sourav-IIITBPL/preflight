@@ -1,156 +1,43 @@
-import {
-	bytesToHex,
-	cre,
-	encodeCallMsg,
-	getNetwork,
-	LAST_FINALIZED_BLOCK_NUMBER,
-	Runner,
-	type Runtime,
-	type CronPayload,
-} from '@chainlink/cre-sdk';
-import { encodeFunctionData, decodeFunctionResult, formatUnits, type Address, zeroAddress } from 'viem';
-import { z } from 'zod';
-import { PriceFeedAggregator } from '../contracts/abi';
+// ============================================================================
+//  main.ts — CRE Workflow entry point
+//
+//  Routes HTTP trigger to the correct simulation based on context.data.type
+//
+//  Supported types:
+//    VAULT     → vaultLogic (deposit | mint | withdraw | redeem)
+//    SWAP      → swapLogic  (exactTokensIn | exactTokensOut | exactETHIn |
+//                            exactETHOut | exactTokensForETH | tokensForExactETH)
+//    LIQUIDITY → liquidityLogic (add | addETH | remove | removeETH)
+// ============================================================================
 
-// ---------- Config ----------
+import { swapLogic      } from "./simulations/swapLogic.js";
+import { vaultLogic     } from "./simulations/vaultLogic.js";
+import { liquidityLogic } from "./simulations/liquidityLogic.js";
 
-const configSchema = z.object({
-	// e.g. "0 */10 * * * *" (every 10 minutes, at second 0)
-	schedule: z.string(),
-	// e.g. "ethereum-mainnet-arbitrum-1"
-	chainName: z.string(),
-	// list of feeds (BTC/USD, ETH/USD, ...)
-	feeds: z.array(
-		z.object({
-			name: z.string(),    // "BTC/USD"
-			address: z.string(), // proxy address
-		}),
-	),
-});
+export const onHttpTrigger = async (runtime: any, context: any) => {
+    const { type } = context.data;
 
-type Config = z.infer<typeof configSchema>;
+    if (!type) {
+        return { error: "MISSING_TYPE", message: "context.data.type must be VAULT | SWAP | LIQUIDITY" };
+    }
 
-type PriceResult = {
-	name: string;
-	address: string;
-	decimals: number;
-	latestAnswerRaw: string;
-	scaled: string;
+    try {
+        switch (type) {
+            case "VAULT":     return await vaultLogic(runtime, context);
+            case "SWAP":      return await swapLogic(runtime, context);
+            case "LIQUIDITY": return await liquidityLogic(runtime, context);
+            default:
+                return { error: "UNKNOWN_TYPE", message: `Unknown type '${type}'` };
+        }
+    } catch (err: any) {
+        return {
+            isSafe:      false,
+            riskLevel:   "CRITICAL",
+            riskScore:   100,
+            error:       "UNHANDLED_SIMULATION_ERROR",
+            message:     err?.message ?? "Unknown error",
+            simulatedAt: Math.floor(Date.now() / 1000),
+            network:     "arbitrum-mainnet",
+        };
+    }
 };
-
-// ---------- Helpers ----------
-
-function getEvmClient(chainName: string) {
-	const net = getNetwork({
-		chainFamily: 'evm',
-		chainSelectorName: chainName,
-		isTestnet: false,
-	});
-	if (!net) throw new Error(`Network not found for chain name: ${chainName}`);
-	return new cre.capabilities.EVMClient(net.chainSelector.selector);
-}
-
-// Safely stringify BigInt
-const safeJsonStringify = (obj: unknown) =>
-	JSON.stringify(obj, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2);
-
-// ---------- Reader ----------
-
-function readFeed(
-	runtime: Runtime<Config>,
-	evmClient: InstanceType<typeof cre.capabilities.EVMClient>,
-	name: string,
-	address: string,
-): PriceResult {
-	// decimals()
-	const decCallData = encodeFunctionData({
-		abi: PriceFeedAggregator,
-		functionName: 'decimals',
-	});
-
-	const decResp = evmClient
-		.callContract(runtime, {
-			call: encodeCallMsg({
-				from: zeroAddress,
-				to: address as Address,
-				data: decCallData,
-			}),
-			blockNumber: LAST_FINALIZED_BLOCK_NUMBER,
-		})
-		.result();
-
-	const decimals = decodeFunctionResult({
-		abi: PriceFeedAggregator,
-		functionName: 'decimals',
-		data: bytesToHex(decResp.data),
-	}) as number;
-
-	// latestAnswer()
-	const ansCallData = encodeFunctionData({
-		abi: PriceFeedAggregator,
-		functionName: 'latestAnswer',
-	});
-
-	const ansResp = evmClient
-		.callContract(runtime, {
-			call: encodeCallMsg({
-				from: zeroAddress,
-				to: address as Address,
-				data: ansCallData,
-			}),
-			blockNumber: LAST_FINALIZED_BLOCK_NUMBER,
-		})
-		.result();
-
-	const latestAnswer = decodeFunctionResult({
-		abi: PriceFeedAggregator,
-		functionName: 'latestAnswer',
-		data: bytesToHex(ansResp.data),
-	}) as bigint;
-
-	const scaled = formatUnits(latestAnswer, decimals);
-
-	runtime.log(
-		`Price feed read | chain=${runtime.config.chainName} feed="${name}" address=${address} decimals=${decimals} latestAnswerRaw=${latestAnswer.toString()} latestAnswerScaled=${scaled}`,
-	);
-
-	return {
-		name,
-		address,
-		decimals,
-		latestAnswerRaw: latestAnswer.toString(),
-		scaled,
-	};
-}
-
-// ---------- Handlers ----------
-
-function onCron(runtime: Runtime<Config>, _payload: CronPayload): string {
-	const evmClient = getEvmClient(runtime.config.chainName);
-
-	const results: PriceResult[] = runtime.config.feeds.map((f) =>
-		readFeed(runtime, evmClient, f.name, f.address),
-	);
-
-	// Return JSON
-	return safeJsonStringify(results);
-}
-
-// ---------- Init ----------
-
-function initWorkflow(config: Config) {
-	const cron = new cre.capabilities.CronCapability();
-	return [
-		cre.handler(
-			cron.trigger({ schedule: config.schedule }),
-			onCron,
-		),
-	];
-}
-
-export async function main() {
-	const runner = await Runner.newRunner<Config>({ configSchema });
-	await runner.run(initWorkflow);
-}
-
-main();

@@ -1,34 +1,44 @@
-# ==========================================================================
-# CRE WORKFLOW SETTINGS FILE
-# ==========================================================================
-# Workflow-specific settings for CRE CLI targets.
-# Each target defines user-workflow and workflow-artifacts groups.
-# Settings here override CRE Project Settings File values.
+# workflow.yaml — Chainlink CRE Workflow definition
 #
-# Example custom target:
-# my-target:
-#   user-workflow:
-#     workflow-name: "MyExampleWorkflow"    # Required: Workflow Registry name
-#   workflow-artifacts:
-#     workflow-path: "./main.ts"            # Path to workflow entry point
-#     config-path: "./config.yaml"          # Path to config file
-#     secrets-path: "../secrets.yaml"       # Path to secrets file (project root by default)
+# This defines the HTTP trigger + compute step for the PreFlight off-chain
+# simulation. The frontend/extension POSTs to the DON-hosted endpoint and
+# receives the simulation result synchronously.
+#
+# Deploy with:  cre workflow deploy workflow.yaml --project-id <your-project-id>
 
-# ==========================================================================
-staging-settings:
-  user-workflow:
-    workflow-name: "my-workflow-ts-staging"
-  workflow-artifacts:
-    workflow-path: "./main.ts"
-    config-path: "./config.staging.json"
-    secrets-path: ""
-    
+name: preflight-security-simulation
+version: "1"
 
-# ==========================================================================
-production-settings:
-  user-workflow:
-    workflow-name: "my-workflow-ts-production"
-  workflow-artifacts:
-    workflow-path: "./main.ts"
-    config-path: "./config.production.json"
-    secrets-path: ""
+triggers:
+  - id: http-trigger
+    type: httpTrigger
+    config:
+      method: POST
+      # The DON will assign a unique URL after deployment.
+
+workflow:
+  - id: run-simulation
+    uses: compute
+    trigger: http-trigger
+    config:
+      # Entry point — must match the export name in main.ts
+      entrypoint: my-workflow/main.ts
+      handler: onHttpTrigger
+
+      # Capabilities this workflow needs
+      capabilities:
+        - evm:
+            networks:
+              - arbitrum-mainnet
+        - http:
+            allowedDomains:
+              - api.arbiscan.io
+              # Chainlink feeds are read via evm.read(), not HTTP
+
+      # Runtime limits
+      timeout: 30000     # 30s max per simulation
+      maxRetries: 1
+
+      # Environment variables injected at runtime (set via `cre secrets set`)
+      env:
+        - ARBISCAN_API_KEY
