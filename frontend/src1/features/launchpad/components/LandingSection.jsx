@@ -38,6 +38,9 @@ export default function LandingSection({ onLaunch, isLaunched = false }) {
             It validates user intent before execution by combining off-chain CRE simulation, deterministic guard checks,
             and policy-based verdicts in one explainable workflow.
           </p>
+          <p className="text-sm text-slate-500 max-w-3xl mx-auto">
+            Launch flow: choose DEX (Camelot or SaucerSwap) -&gt; open secure DEX runtime page -&gt; intercept intent -&gt; run checks -&gt; mint report -&gt; execute.
+          </p>
 
           <div className="flex flex-col items-center gap-6">
             <button

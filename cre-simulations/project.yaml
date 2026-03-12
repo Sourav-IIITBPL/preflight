@@ -1,13 +1,21 @@
-# project.yaml — Chainlink CRE project definition
-# Register this project: cre project create --file project.yaml
+# ==========================================================================
+# CRE PROJECT SETTINGS FILE (cre-cli v1.3+)
+# ==========================================================================
+# This CLI version expects at least one target at project root.
+# Use with:
+#   cre workflow simulate ./my-workflow -T staging-settings ...
+#
+# Legacy metadata (kept for reference):
+# id: preflight-defi-guard
+# name: PreFlight DeFi Security Guard
+# version: 1.0.0
 
-specVersion: v1
-id: preflight-defi-guard
-version: 1.0.0
-name: PreFlight DeFi Security Guard
-description: |
-  Off-chain transaction simulation layer for Uniswap V2 swaps and ERC4626 vaults
-  on Arbitrum. Complements on-chain guards with trace-based vulnerability detection.
+staging-settings:
+  rpcs:
+    - chain-name: ethereum-mainnet-arbitrum-1
+      url: https://arbitrum-one-rpc.publicnode.com
 
-workflows:
-  - my-workflow/workflow.yaml
+production-settings:
+  rpcs:
+    - chain-name: ethereum-mainnet-arbitrum-1
+      url: https://arbitrum-one-rpc.publicnode.com

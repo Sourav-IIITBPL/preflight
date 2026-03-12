@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { APP_ROUTES, NAV_ITEMS } from './routes';
+import { APP_ROUTES } from './routes';
 import { APP_NAME, NETWORK_LABEL } from '../shared/constants/app';
 import { useLaunchSession } from '../features/launchpad/hooks/useLaunchSession';
 import { useWalletGate } from '../features/preflight-session/hooks/useWalletGate';
 import LaunchpadPage from '../pages/LaunchpadPage';
+import DexPage from '../pages/DexPage';
 import PortfolioPage from '../pages/PortfolioPage';
 import ToastStack from '../shared/ui/ToastStack';
 import Button from '../shared/ui/Button';
@@ -13,11 +14,21 @@ export default function App() {
   const [route, setRoute] = useState(APP_ROUTES.HOME);
   const launchSession = useLaunchSession();
   const walletGate = useWalletGate();
+  const isDexRoute = route === APP_ROUTES.DEX;
 
   const walletLabel = useMemo(() => {
     if (!walletGate.address) return 'Connect Wallet';
     return `${walletGate.address.slice(0, 6)}...${walletGate.address.slice(-4)}`;
   }, [walletGate.address]);
+
+  const navItems = useMemo(() => {
+    const items = [{ key: APP_ROUTES.HOME, label: 'Launchpad' }];
+    if (launchSession.selectedDex) {
+      items.push({ key: APP_ROUTES.DEX, label: 'DEX' });
+    }
+    items.push({ key: APP_ROUTES.PORTFOLIO, label: 'My PreFlight Reports & Rewards' });
+    return items;
+  }, [launchSession.selectedDex]);
 
   const onWalletAction = async () => {
     if (walletGate.isConnected) {
@@ -55,7 +66,7 @@ export default function App() {
           </div>
 
           <nav className="ml-2 flex flex-wrap items-center gap-2">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <button
                 key={item.key}
                 className={`rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider transition ${
@@ -79,16 +90,22 @@ export default function App() {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto min-h-[calc(100vh-73px)] max-w-7xl px-4 py-6 md:px-6 md:py-8">
-        {route === APP_ROUTES.HOME ? (
-          <LaunchpadPage launchSession={launchSession} walletGate={walletGate} />
-        ) : (
+      <main
+        className={`relative z-10 min-h-[calc(100vh-73px)] ${
+          isDexRoute ? 'w-full px-0 py-0' : 'mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-8'
+        }`}
+      >
+        {route === APP_ROUTES.HOME ? <LaunchpadPage launchSession={launchSession} onDexSelected={() => setRoute(APP_ROUTES.DEX)} /> : null}
+
+        {route === APP_ROUTES.DEX ? <DexPage launchSession={launchSession} walletGate={walletGate} /> : null}
+
+        {route === APP_ROUTES.PORTFOLIO ? (
           <PortfolioPage
             walletGate={walletGate}
             mintedReports={launchSession.mintedReports}
             clearReports={launchSession.clearReports}
           />
-        )}
+        ) : null}
       </main>
 
       <ToastStack items={launchSession.toasts} />

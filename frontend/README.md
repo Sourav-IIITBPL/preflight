@@ -1,83 +1,82 @@
 # PreFlight Frontend
 
 ## What
-PreFlight frontend is the user-facing security layer for Arbitrum DeFi transactions.
-It sits before execution and guides users through:
-1. transaction intent capture,
-2. off-chain CRE simulation,
-3. on-chain guard evaluation,
-4. risk report review,
-5. report NFT mint,
-6. guarded execution through `PreFlightRouter`.
+PreFlight frontend is a security-first transaction execution interface.
+Users perform DEX actions inside PreFlight, not directly on external DEX tabs.
+Current DEX targets:
+1. Camelot (Arbitrum)
+2. SaucerSwap (Hedera)
 
 ## Why
-DEX previews are helpful but often incomplete for security-critical decisions.
-PreFlight adds a structured verification step before signing and execution so users can inspect risk evidence first.
+PreFlight inserts a security checkpoint between "user action" and "wallet signature".
+It gives users a risk verdict before execution, with off-chain CRE simulation + on-chain checks.
 
 ## When
-PreFlight should run **after user sets swap/liquidity/vault parameters** and **before wallet signature/execution**.
+Use PreFlight at the moment the user initiates swap/liquidity/vault actions and before signing.
 
-## How (System View)
-1. User activates floating PreFlight launcher.
-2. User opens sidebar only when ready.
-3. PreFlight captures/accepts intent fields.
-4. PreFlight runs off-chain CRE simulation.
-5. PreFlight runs on-chain guard checks.
-6. Frontend aggregates results into one risk report.
-7. User reviews report (freshness window: 20s).
-8. User mints RiskReport NFT.
-9. User executes via `PreFlightRouter`.
+## How (Product Flow)
+1. User lands on Home page.
+2. User clicks Launch.
+3. Mid-sized modal appears: "Choose your DEX".
+4. User selects Camelot or SaucerSwap.
+5. Modal closes.
+6. DEX page becomes active (also visible in nav as `DEX`).
+7. DEX website is embedded inside PreFlight runtime page with URL bar on top.
+8. User interacts with DEX normally (swap/add/remove liquidity/etc).
+9. Transaction intent is intercepted and calldata/parameters are captured.
+10. PreFlight sidebar opens and runs checks chronologically.
+11. Large centered report modal appears with verdict.
+12. If report is stale (>10s view time), checks re-run.
+13. User mints RiskReport NFT.
+14. User executes through PreFlightRouter.
+15. Wallet signature prompt appears.
+16. PreFlightRouter executes on target DEX router/pools.
+17. Success popup is shown and auto-closes.
 
-## Workflow (User Interaction)
-1. User fills swap parameters on DEX.
-2. User clicks DEX swap/preview flow.
-3. DEX builds transaction calldata.
-4. PreFlight intercepts/receives transaction intent.
-5. PreFlight decodes calldata and extracts parameters.
-6. User clicks **Check PreFlight**.
-7. PreFlight sends payload to CRE (off-chain checks) + runs on-chain checks.
-8. Risk report is generated and shown to user.
-9. If report stays open for more than 20s, checks re-run automatically.
-10. User mints RiskReport NFT.
-11. User clicks execute swap via PreFlightRouter.
-12. User receives wallet signature request.
-13. PreFlightRouter executes against DEX router/liquidity pools.
+## Workflow Stages (Sidebar Timeline)
+1. Intercept transaction intent
+2. Decode calldata + parameters
+3. Off-chain CRE simulation
+4. On-chain guard checks
+5. Risk report generation
 
-## Data Captured / Used
-Core fields used by simulation and checks:
-1. `type` and `opType`
-2. `from` (wallet)
-3. `chainId/network`
-4. `routerAddress` or `vaultAddress`
-5. `data` (tx calldata)
-6. route/path and amount fields (`amountIn`, `amountOutMin`, etc.)
-7. `ethValue`
+## User Interactions
+1. Launch button on Home
+2. DEX selection modal choice
+3. DEX runtime operations inside embedded DEX page
+4. Floating PreFlight icon (bottom-right on DEX page)
+5. Sidebar review + check run
+6. Report review + mint
+7. Execute transaction button
 
-## Current Frontend Scope (`src1`)
-1. Landing page remains visible after launcher activation.
-2. Floating icon appears after launch and opens sidebar on click.
-3. Sidebar runs checks only on explicit **Check PreFlight** click.
-4. CRE payload wiring is implemented (`VITE_PREFLIGHT_SIM_URL`).
-5. Report freshness auto-recheck is set to 20 seconds.
-6. Mint + execute flow is wired in UI state.
+## Runtime Rules
+1. Floating icon is visible on DEX page.
+2. Floating icon is clickable only after minimum intent fields are present.
+3. Sidebar is opened from icon click (or auto-open on intercepted calldata update).
+4. Success toast auto-clears in 3 seconds.
 
-## Constraint You Should Know
-A normal website tab cannot read arbitrary external tab/window internals directly.
-For full live DEX interception across websites (Camelot tab, etc.), production architecture requires a browser extension runtime (content script + page injection + message bridge).
-
-## Environment Variables
-Create `.env` in `frontend/`:
+## Off-chain CRE Wiring
+`src1` sends CRE-compatible payloads from frontend intent data.
+Set:
 
 ```bash
-VITE_PREFLIGHT_SIM_URL=<your_CRE_http_trigger_url>
-# Optional: default is cre
+VITE_PREFLIGHT_SIM_URL=<CRE trigger URL>
 VITE_PREFLIGHT_SIM_FORMAT=cre
-VITE_PREFLIGHT_ROUTER_ADDRESS=<optional_router_contract>
-VITE_PREFLIGHT_REPORT_NFT_ADDRESS=<optional_nft_contract>
 ```
 
-## Run Locally
-Default app:
+Payload fields include:
+1. `type`, `opType`
+2. `from`
+3. `routerAddress` or `vaultAddress`
+4. `data` (calldata)
+5. amount/path fields by operation type
+
+## Important Constraint
+Full automatic interception from real third-party DEX pages across browser contexts requires extension runtime (content script + injected page hook).
+Current `src1` is prepared for this model and supports local runtime flow in the integrated DEX page.
+
+## Local Run
+Default frontend:
 
 ```bash
 cd frontend
@@ -85,27 +84,9 @@ npm install
 npm run dev
 ```
 
-Run `src1` entry (without replacing `src`):
+Run `src1` entry without replacing `src`:
 
 ```bash
 cd frontend
 npm run dev -- --config .vite-src1.config.mjs
-```
-
-## Code Structure (Implemented)
-```text
-frontend/src1/
-  app/
-  pages/
-  features/
-    launchpad/
-    preflight-session/
-    reports/
-    portfolio/
-  services/
-    api/
-    chain/
-    adapters/
-  shared/
-  styles/
 ```

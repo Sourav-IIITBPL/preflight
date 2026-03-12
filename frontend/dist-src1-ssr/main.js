@@ -1,28 +1,44 @@
 import { jsxs, Fragment, jsx } from "react/jsx-runtime";
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import ReactDOM from "react-dom/client";
 import { useAccount, useConnect, useDisconnect, createConfig, http, WagmiProvider } from "wagmi";
-import { Shield, Activity, ArrowRight, Fingerprint, Layers, Database, Globe, ShieldCheck, Clock3, AlertTriangle, PanelRightOpen, LoaderCircle, CheckCircle2, CircleX, CircleDashed, X, Wallet, Link2, FileSearch2, Zap, RefreshCcw, FileText, ShieldAlert, ExternalLink } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Shield, Activity, ArrowRight, Fingerprint, Layers, Database, Globe, ShieldCheck, Clock3, AlertTriangle, X, Layers2, PanelRightOpen, LoaderCircle, CheckCircle2, CircleX, CircleDashed, Wallet, Link2, FileSearch2, Zap, RefreshCcw, FileText, ShieldAlert, ExternalLink } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { arbitrum } from "wagmi/chains";
 import { injected } from "wagmi/connectors";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const APP_ROUTES = {
   HOME: "home",
+  DEX: "dex",
   PORTFOLIO: "portfolio"
 };
-const NAV_ITEMS = [
-  { key: APP_ROUTES.HOME, label: "Launchpad" },
-  { key: APP_ROUTES.PORTFOLIO, label: "My PreFlight Reports & Rewards" }
-];
 const APP_NAME = "PreFlight";
 const NETWORK_LABEL = "Arbitrum One";
-const REPORT_STALE_AFTER_MS = 2e4;
+const REPORT_STALE_AFTER_MS = 1e4;
 const TOAST_TTL_MS = 4e3;
 const INTENT_CHANNEL = "preflight_intent_channel";
 const INTENT_STORAGE_KEY = "preflight.intent.v1";
 const REPORT_STORAGE_KEY = "preflight.reports.v1";
 const LAUNCH_STORAGE_KEY = "preflight.launch.active.v1";
+const DEX_SELECTION_STORAGE_KEY = "preflight.dex.selection.v1";
+const SUPPORTED_DEXES = [
+  {
+    id: "camelot-arbitrum",
+    name: "Camelot",
+    chain: "Arbitrum",
+    url: "https://app.camelot.exchange",
+    tag: "Arbitrum Mainnet",
+    type: "swap-liquidity"
+  },
+  {
+    id: "saucerswap-hedera",
+    name: "SaucerSwap",
+    chain: "Hedera",
+    url: "https://www.saucerswap.finance",
+    tag: "Hedera Mainnet",
+    type: "swap-liquidity"
+  }
+];
 function readJsonStorage(key, fallback) {
   try {
     const value = localStorage.getItem(key);
@@ -45,27 +61,54 @@ function createToast(title, message) {
     message
   };
 }
+function findDexById(id) {
+  return SUPPORTED_DEXES.find((dex) => dex.id === id) ?? null;
+}
 function useLaunchSession() {
   const [isLaunched, setIsLaunched] = useState(() => Boolean(readJsonStorage(LAUNCH_STORAGE_KEY, false)));
+  const [isDexSelectorOpen, setDexSelectorOpen] = useState(false);
+  const [selectedDexId, setSelectedDexId] = useState(() => String(readJsonStorage(DEX_SELECTION_STORAGE_KEY, "") || ""));
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isResultOpen, setResultOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [mintedReports, setMintedReports] = useState(() => readJsonStorage(REPORT_STORAGE_KEY, []));
+  const selectedDex = useMemo(() => findDexById(selectedDexId), [selectedDexId]);
   useEffect(() => {
     writeJsonStorage(LAUNCH_STORAGE_KEY, isLaunched);
   }, [isLaunched]);
   useEffect(() => {
+    writeJsonStorage(DEX_SELECTION_STORAGE_KEY, selectedDexId);
+  }, [selectedDexId]);
+  useEffect(() => {
     const onStorage = (event) => {
-      if (event.key !== LAUNCH_STORAGE_KEY || !event.newValue) return;
-      try {
-        setIsLaunched(Boolean(JSON.parse(event.newValue)));
-      } catch {
+      if (event.key === LAUNCH_STORAGE_KEY && event.newValue) {
+        try {
+          setIsLaunched(Boolean(JSON.parse(event.newValue)));
+        } catch {
+        }
+      }
+      if (event.key === DEX_SELECTION_STORAGE_KEY && event.newValue) {
+        try {
+          setSelectedDexId(String(JSON.parse(event.newValue) ?? ""));
+        } catch {
+        }
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-  const launch = () => setIsLaunched(true);
+  const launch = () => {
+    setIsLaunched(true);
+    setDexSelectorOpen(true);
+  };
+  const closeDexSelector = () => setDexSelectorOpen(false);
+  const chooseDex = (dexId) => {
+    setSelectedDexId(dexId);
+    setDexSelectorOpen(false);
+    setIsLaunched(true);
+    setSidebarOpen(false);
+    setResultOpen(false);
+  };
   const pushToast = (title, message = "") => {
     const next = createToast(title, message);
     setToasts((prev) => [...prev, next]);
@@ -87,12 +130,16 @@ function useLaunchSession() {
   const reportCount = useMemo(() => mintedReports.length, [mintedReports.length]);
   return {
     isLaunched,
+    isDexSelectorOpen,
+    selectedDex,
     isSidebarOpen,
     isResultOpen,
     toasts,
     mintedReports,
     reportCount,
     launch,
+    chooseDex,
+    closeDexSelector,
     setSidebarOpen,
     setResultOpen,
     pushToast,
@@ -177,6 +224,7 @@ function LandingSection({ onLaunch, isLaunched = false }) {
           /* @__PURE__ */ jsx("span", { className: "text-white font-bold", children: "transaction security layer" }),
           " for Arbitrum DeFi. It validates user intent before execution by combining off-chain CRE simulation, deterministic guard checks, and policy-based verdicts in one explainable workflow."
         ] }),
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 max-w-3xl mx-auto", children: "Launch flow: choose DEX (Camelot or SaucerSwap) -> open secure DEX runtime page -> intercept intent -> run checks -> mint report -> execute." }),
         /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center gap-6", children: [
           /* @__PURE__ */ jsxs(
             "button",
@@ -319,6 +367,109 @@ function LandingSection({ onLaunch, isLaunched = false }) {
         )
       ] })
     ] })
+  ] });
+}
+function DexSelectorModal({ isOpen, onClose, onChoose }) {
+  return /* @__PURE__ */ jsx(AnimatePresence, { children: isOpen ? /* @__PURE__ */ jsxs(Fragment, { children: [
+    /* @__PURE__ */ jsx(
+      motion.div,
+      {
+        className: "fixed inset-0 z-[180] bg-black/70 backdrop-blur-sm",
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+        onClick: onClose
+      }
+    ),
+    /* @__PURE__ */ jsxs(
+      motion.div,
+      {
+        className: "fixed left-1/2 top-1/2 z-[190] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 rounded-3xl glass-card border border-brand-cyan/20 p-5 md:p-7",
+        initial: { opacity: 0, scale: 0.96, y: 18 },
+        animate: { opacity: 1, scale: 1, y: 0 },
+        exit: { opacity: 0, scale: 0.97, y: 12 },
+        children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-start justify-between gap-3 border-b border-white/10 pb-4", children: [
+            /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsx("p", { className: "text-[10px] font-black uppercase tracking-[0.24em] text-brand-cyan", children: "Launch Runtime" }),
+              /* @__PURE__ */ jsx("h3", { className: "mt-1 text-2xl font-black uppercase tracking-[0.1em] text-white", children: "Choose Your DEX" }),
+              /* @__PURE__ */ jsx("p", { className: "mt-2 text-sm text-slate-400", children: "Select a supported DEX. A dedicated DEX page will open inside PreFlight." })
+            ] }),
+            /* @__PURE__ */ jsx(
+              "button",
+              {
+                className: "rounded-lg border border-white/10 p-2 text-slate-400 hover:border-white/30 hover:text-white",
+                onClick: onClose,
+                children: /* @__PURE__ */ jsx(X, { size: 16 })
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "mt-5 grid gap-3 md:grid-cols-2", children: SUPPORTED_DEXES.map((dex) => /* @__PURE__ */ jsxs(
+            "button",
+            {
+              onClick: () => onChoose(dex.id),
+              className: "text-left rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-brand-cyan/40 hover:bg-white/[0.05]",
+              children: [
+                /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                  /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+                    /* @__PURE__ */ jsx("div", { className: "h-9 w-9 rounded-lg border border-brand-cyan/30 bg-brand-cyan/10 grid place-items-center text-brand-cyan", children: /* @__PURE__ */ jsx(Layers2, { size: 16 }) }),
+                    /* @__PURE__ */ jsxs("div", { children: [
+                      /* @__PURE__ */ jsx("div", { className: "text-sm font-black uppercase tracking-[0.12em] text-white", children: dex.name }),
+                      /* @__PURE__ */ jsx("div", { className: "text-[10px] uppercase tracking-[0.14em] text-brand-cyan", children: dex.tag })
+                    ] })
+                  ] }),
+                  /* @__PURE__ */ jsx(Globe, { size: 16, className: "text-slate-500" })
+                ] }),
+                /* @__PURE__ */ jsx("div", { className: "mt-3 rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-400 break-all", children: dex.url })
+              ]
+            },
+            dex.id
+          )) })
+        ]
+      }
+    )
+  ] }) : null });
+}
+function LaunchpadPage({ launchSession, onDexSelected }) {
+  const {
+    isLaunched,
+    isDexSelectorOpen,
+    launch,
+    chooseDex,
+    closeDexSelector,
+    selectedDex,
+    pushToast
+  } = launchSession;
+  return /* @__PURE__ */ jsxs("div", { className: "relative min-h-[72vh]", children: [
+    /* @__PURE__ */ jsx(
+      LandingSection,
+      {
+        isLaunched,
+        onLaunch: () => {
+          launch();
+          pushToast("Launcher activated", "Choose a DEX to open secure runtime page");
+        }
+      }
+    ),
+    /* @__PURE__ */ jsx(
+      DexSelectorModal,
+      {
+        isOpen: isDexSelectorOpen,
+        onClose: closeDexSelector,
+        onChoose: (dexId) => {
+          chooseDex(dexId);
+          onDexSelected?.();
+          pushToast("DEX selected", "DEX runtime page is ready");
+        }
+      }
+    ),
+    selectedDex ? /* @__PURE__ */ jsxs("div", { className: "fixed bottom-4 left-4 z-[100] rounded-lg border border-brand-cyan/30 bg-black/70 px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-brand-cyan", children: [
+      "Active runtime: ",
+      selectedDex.name,
+      " (",
+      selectedDex.chain,
+      ")"
+    ] }) : null
   ] });
 }
 function FloatingLauncher({ hidden = false, disabled = false, onClick }) {
@@ -1317,12 +1468,22 @@ function createMintedSnapshot({ report, mintResult, owner }) {
     report
   };
 }
-function LaunchpadPage({ launchSession, walletGate }) {
+function isIntentReady(intent) {
+  const from = String(intent?.from ?? "").trim();
+  const opType = String(intent?.opType ?? "").trim();
+  const data = String(intent?.payload?.data ?? "").trim();
+  const amount = String(intent?.payload?.amount ?? "").trim();
+  if (!from || !opType || !amount || !data || data === "0x") return false;
+  if (intent?.type === "VAULT") {
+    return Boolean(String(intent?.payload?.vaultAddress ?? "").trim());
+  }
+  return Boolean(String(intent?.payload?.routerAddress ?? "").trim());
+}
+function DexPage({ launchSession, walletGate }) {
   const {
-    isLaunched,
+    selectedDex,
     isSidebarOpen,
     isResultOpen,
-    launch,
     setSidebarOpen,
     setResultOpen,
     pushToast,
@@ -1335,6 +1496,7 @@ function LaunchpadPage({ launchSession, walletGate }) {
   const [activeMint, setActiveMint] = useState(null);
   const [resultOpenedAt, setResultOpenedAt] = useState(0);
   const bridgeRef = useRef(null);
+  const lastInterceptedDataRef = useRef("");
   const { status, timeline, report, error, runChecks, reset } = usePreflightChecks();
   useEffect(() => {
     const bridge = createProtocolIntentBridge({
@@ -1346,10 +1508,35 @@ function LaunchpadPage({ launchSession, walletGate }) {
     return () => bridge.disconnect();
   }, []);
   useEffect(() => {
+    if (!selectedDex) return;
+    setIntent((current) => {
+      const next = mergeIntent(current, {
+        targetUrl: selectedDex.url,
+        protocol: selectedDex.name,
+        network: selectedDex.chain
+      });
+      bridgeRef.current?.publishIntent(next);
+      return next;
+    });
+  }, [selectedDex]);
+  useEffect(() => {
+    if (!selectedDex) return;
+    const data = String(intent?.payload?.data ?? "").trim();
+    if (!data || data === "0x" || data === lastInterceptedDataRef.current) return;
+    lastInterceptedDataRef.current = data;
+    setSessionPhase(SESSION_PHASE.CAPTURING_INTENT);
+    setSidebarOpen(true);
+    pushToast("Transaction intercepted", "Captured calldata and parameters. Running checks...");
+    const timer = setTimeout(() => {
+      runChecksFlow("auto-intercept");
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [intent?.payload?.data, selectedDex]);
+  useEffect(() => {
     if (executionState.status !== "success") return void 0;
     const timer = setTimeout(() => {
       setExecutionState({ status: "idle", txHash: "", error: "" });
-    }, 4e3);
+    }, 3e3);
     return () => clearTimeout(timer);
   }, [executionState.status]);
   const publishIntent = useCallback((patch) => {
@@ -1367,24 +1554,24 @@ function LaunchpadPage({ launchSession, walletGate }) {
       setExecutionState({ status: "idle", txHash: "", error: "" });
       setActiveMint(null);
       if (!walletGate.isConnected) {
-        pushToast("Wallet not connected", "Connect wallet in PreFlight and the target protocol first");
+        pushToast("Wallet not connected", "Connect wallet in PreFlight and the selected DEX page");
         return;
       }
       if (!intent.walletConnectedOnTarget) {
-        pushToast("Wallet not connected on target", 'Turn on "Wallet connected on target" in sidebar first');
+        pushToast("Wallet not connected on DEX", "Enable wallet connection status before checks");
         return;
       }
       setSessionPhase(SESSION_PHASE.RUNNING_CHECKS);
       const nextReport = await runChecks(intent);
       if (!nextReport) {
         setSessionPhase(SESSION_PHASE.IDLE);
-        pushToast("PreFlight failed", error || "Check console/network and try again");
+        pushToast("PreFlight failed", error || "Check payload fields and try again");
         return;
       }
       setSessionPhase(SESSION_PHASE.REPORT_READY);
       setResultOpenedAt(Date.now());
       setResultOpen(true);
-      pushToast("PreFlight report ready", origin === "stale" ? "Report revalidated" : "Review before minting");
+      pushToast("Risk report ready", origin === "auto-intercept" ? "Auto-check completed after intercept" : "Review and mint before execution");
     },
     [status, setResultOpen, walletGate.isConnected, intent, runChecks, pushToast, error]
   );
@@ -1392,7 +1579,7 @@ function LaunchpadPage({ launchSession, walletGate }) {
     if (!isResultOpen || !report || mintState.status === "success") return;
     setSessionPhase(SESSION_PHASE.REPORT_STALE);
     setResultOpen(false);
-    pushToast("Report expired (>20s)", "Re-running checks with latest chain context");
+    pushToast("Report expired (>10s)", "Re-running checks with latest state");
     await runChecksFlow("stale");
   }, [isResultOpen, report, mintState.status, setResultOpen, pushToast, runChecksFlow]);
   const freshness = useResultFreshness({
@@ -1425,10 +1612,7 @@ function LaunchpadPage({ launchSession, walletGate }) {
       setMintState({ status: "success", error: "" });
       setSessionPhase(SESSION_PHASE.MINTED);
       setResultOpen(false);
-      pushToast(
-        "Report NFT minted",
-        mintResult.simulated ? "Using simulated mint mode (no NFT address set)" : `Tx: ${mintResult.txHash.slice(0, 10)}...`
-      );
+      pushToast("RiskReport NFT minted", mintResult.simulated ? "Simulated mint mode" : `Tx: ${mintResult.txHash.slice(0, 10)}...`);
     } catch (err) {
       setMintState({ status: "error", error: err?.message ?? "Mint failed" });
       setSessionPhase(SESSION_PHASE.REPORT_READY);
@@ -1437,7 +1621,7 @@ function LaunchpadPage({ launchSession, walletGate }) {
   }, [report, freshness.isStale, pushToast, runChecksFlow, walletGate.address, addMintedReport, setResultOpen]);
   const handleExecute = useCallback(async () => {
     if (!activeMint) {
-      pushToast("Mint required", "Mint report NFT before executing transaction");
+      pushToast("Mint required", "Mint RiskReport NFT before execution");
       return;
     }
     setExecutionState({ status: "pending", txHash: "", error: "" });
@@ -1449,10 +1633,7 @@ function LaunchpadPage({ launchSession, walletGate }) {
       });
       setExecutionState({ status: "success", txHash: result.txHash, error: "" });
       setSessionPhase(SESSION_PHASE.EXECUTED);
-      pushToast(
-        "Transaction executed",
-        result.simulated ? "Simulated execution mode (router address not configured)" : `Tx: ${result.txHash.slice(0, 10)}...`
-      );
+      pushToast("Transaction successful", "Execution completed through PreFlightRouter");
     } catch (err) {
       setExecutionState({ status: "error", txHash: "", error: err?.message ?? "Execution failed" });
       setSessionPhase(SESSION_PHASE.EXECUTION_FAILED);
@@ -1472,32 +1653,60 @@ function LaunchpadPage({ launchSession, walletGate }) {
     () => walletGate.isConnected && intent.walletConnectedOnTarget && status !== "running",
     [walletGate.isConnected, intent.walletConnectedOnTarget, status]
   );
-  return /* @__PURE__ */ jsxs("div", { className: "relative min-h-[72vh]", children: [
-    /* @__PURE__ */ jsx(
-      LandingSection,
-      {
-        isLaunched,
-        onLaunch: () => {
-          if (!isLaunched) {
-            launch();
-            pushToast("PreFlight launcher activated", "Floating icon is now active. Click the icon when you are ready.");
-            return;
-          }
-          pushToast("PreFlight already active", "Use the floating icon to open the sidebar.");
+  const canOpenLauncher = useMemo(() => isIntentReady(intent), [intent]);
+  if (!selectedDex) {
+    return /* @__PURE__ */ jsxs(Card, { className: "p-8 text-center", children: [
+      /* @__PURE__ */ jsx("h2", { className: "text-xl font-black uppercase tracking-[0.12em] text-white", children: "No DEX Selected" }),
+      /* @__PURE__ */ jsx("p", { className: "mt-3 text-sm text-slate-400", children: "Go back to Launchpad and choose Camelot or SaucerSwap first." })
+    ] });
+  }
+  return /* @__PURE__ */ jsxs("div", { className: "relative w-full h-[calc(100vh-73px)] min-h-[640px]", children: [
+    /* @__PURE__ */ jsx(Card, { className: "relative h-full overflow-hidden rounded-none md:rounded-none p-0 border-x-0 md:border-x-0", children: /* @__PURE__ */ jsxs("div", { className: "absolute inset-0 z-0", children: [
+      /* @__PURE__ */ jsxs("div", { className: "absolute top-0 left-0 right-0 h-12 bg-[#111] border-b border-white/10 flex items-center px-4 gap-4 z-20", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex gap-1.5", children: [
+          /* @__PURE__ */ jsx("div", { className: "w-3 h-3 rounded-full bg-red-500/50" }),
+          /* @__PURE__ */ jsx("div", { className: "w-3 h-3 rounded-full bg-yellow-500/50" }),
+          /* @__PURE__ */ jsx("div", { className: "w-3 h-3 rounded-full bg-green-500/50" })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "bg-black/50 px-4 py-1 rounded-md border border-white/5 text-xs text-slate-400 w-full max-w-3xl font-mono break-all", children: selectedDex.url }),
+        /* @__PURE__ */ jsxs("div", { className: "ml-auto flex items-center gap-2", children: [
+          /* @__PURE__ */ jsx(Badge, { label: selectedDex.name, tone: "info" }),
+          /* @__PURE__ */ jsx(
+            Button,
+            {
+              variant: "ghost",
+              className: "!px-3 !py-1.5 text-[10px]",
+              onClick: () => window.open(selectedDex.url, "_blank", "noopener,noreferrer"),
+              children: "Open In New Tab"
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx("div", { className: `h-full w-full pt-12 transition ${isSidebarOpen ? "blur-[2px] brightness-75" : ""}`, children: /* @__PURE__ */ jsx(
+        "iframe",
+        {
+          src: selectedDex.url,
+          className: "h-full w-full border-none",
+          title: `${selectedDex.name} DEX`,
+          referrerPolicy: "no-referrer",
+          allow: "clipboard-write; fullscreen"
         }
-      }
-    ),
-    isLaunched ? /* @__PURE__ */ jsx(
+      ) })
+    ] }) }),
+    /* @__PURE__ */ jsx(
       FloatingLauncher,
       {
         hidden: isSidebarOpen,
-        disabled: false,
+        disabled: !canOpenLauncher,
         onClick: () => {
+          if (!canOpenLauncher) {
+            pushToast("Complete transaction fields first", "Need calldata, amount, sender, and router/vault address");
+            return;
+          }
           setSidebarOpen(true);
-          pushToast("PreFlight panel opened", "Review intent and run checks when ready");
         }
       }
-    ) : null,
+    ),
     /* @__PURE__ */ jsx(
       SessionSidebar,
       {
@@ -1677,10 +1886,19 @@ function App() {
   const [route, setRoute] = useState(APP_ROUTES.HOME);
   const launchSession = useLaunchSession();
   const walletGate = useWalletGate();
+  const isDexRoute = route === APP_ROUTES.DEX;
   const walletLabel = useMemo(() => {
     if (!walletGate.address) return "Connect Wallet";
     return `${walletGate.address.slice(0, 6)}...${walletGate.address.slice(-4)}`;
   }, [walletGate.address]);
+  const navItems = useMemo(() => {
+    const items = [{ key: APP_ROUTES.HOME, label: "Launchpad" }];
+    if (launchSession.selectedDex) {
+      items.push({ key: APP_ROUTES.DEX, label: "DEX" });
+    }
+    items.push({ key: APP_ROUTES.PORTFOLIO, label: "My PreFlight Reports & Rewards" });
+    return items;
+  }, [launchSession.selectedDex]);
   const onWalletAction = async () => {
     if (walletGate.isConnected) {
       const result2 = walletGate.disconnectWallet();
@@ -1710,7 +1928,7 @@ function App() {
           /* @__PURE__ */ jsx("div", { className: "text-[10px] uppercase tracking-[0.16em] text-slate-400", children: NETWORK_LABEL })
         ] })
       ] }),
-      /* @__PURE__ */ jsx("nav", { className: "ml-2 flex flex-wrap items-center gap-2", children: NAV_ITEMS.map((item) => /* @__PURE__ */ jsx(
+      /* @__PURE__ */ jsx("nav", { className: "ml-2 flex flex-wrap items-center gap-2", children: navItems.map((item) => /* @__PURE__ */ jsx(
         "button",
         {
           className: `rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider transition ${route === item.key ? "bg-white/12 text-white border border-white/20" : "bg-transparent text-slate-400 border border-transparent hover:text-white hover:border-white/15"}`,
@@ -1724,14 +1942,24 @@ function App() {
         /* @__PURE__ */ jsx(Button, { variant: walletGate.isConnected ? "ghost" : "primary", onClick: onWalletAction, children: walletLabel })
       ] })
     ] }) }),
-    /* @__PURE__ */ jsx("main", { className: "relative z-10 mx-auto min-h-[calc(100vh-73px)] max-w-7xl px-4 py-6 md:px-6 md:py-8", children: route === APP_ROUTES.HOME ? /* @__PURE__ */ jsx(LaunchpadPage, { launchSession, walletGate }) : /* @__PURE__ */ jsx(
-      PortfolioPage,
+    /* @__PURE__ */ jsxs(
+      "main",
       {
-        walletGate,
-        mintedReports: launchSession.mintedReports,
-        clearReports: launchSession.clearReports
+        className: `relative z-10 min-h-[calc(100vh-73px)] ${isDexRoute ? "w-full px-0 py-0" : "mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-8"}`,
+        children: [
+          route === APP_ROUTES.HOME ? /* @__PURE__ */ jsx(LaunchpadPage, { launchSession, onDexSelected: () => setRoute(APP_ROUTES.DEX) }) : null,
+          route === APP_ROUTES.DEX ? /* @__PURE__ */ jsx(DexPage, { launchSession, walletGate }) : null,
+          route === APP_ROUTES.PORTFOLIO ? /* @__PURE__ */ jsx(
+            PortfolioPage,
+            {
+              walletGate,
+              mintedReports: launchSession.mintedReports,
+              clearReports: launchSession.clearReports
+            }
+          ) : null
+        ]
       }
-    ) }),
+    ),
     /* @__PURE__ */ jsx(ToastStack, { items: launchSession.toasts })
   ] });
 }

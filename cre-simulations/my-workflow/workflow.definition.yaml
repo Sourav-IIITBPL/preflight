@@ -1,0 +1,41 @@
+# workflow.definition.yaml — Legacy CRE workflow definition
+#
+# This file contains the HTTP trigger + compute step for the PreFlight
+# off-chain simulation runtime.
+
+name: preflight-security-simulation
+version: "1"
+
+triggers:
+  - id: http-trigger
+    type: httpTrigger
+    config:
+      method: POST
+      # The DON will assign a unique URL after deployment.
+
+workflow:
+  - id: run-simulation
+    uses: compute
+    trigger: http-trigger
+    config:
+      # Entry point — must match the export name in main.ts
+      entrypoint: my-workflow/main.ts
+      handler: onHttpTrigger
+
+      # Capabilities this workflow needs
+      capabilities:
+        - evm:
+            networks:
+              - arbitrum-mainnet
+        - http:
+            allowedDomains:
+              - api.arbiscan.io
+              # Chainlink feeds are read via evm.read(), not HTTP
+
+      # Runtime limits
+      timeout: 30000     # 30s max per simulation
+      maxRetries: 1
+
+      # Environment variables injected at runtime
+      env:
+        - ARBISCAN_API_KEY

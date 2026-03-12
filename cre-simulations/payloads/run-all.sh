@@ -3,6 +3,7 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR" || exit 1
+TARGET="${CRE_TARGET:-staging-settings}"
 
 if ! command -v cre >/dev/null 2>&1; then
   echo "cre CLI not found. Install it first: npm install -g @chainlink/cre-cli"
@@ -18,7 +19,7 @@ run_payload() {
   fi
 
   echo "[RUN ] $file"
-  if cre workflow simulate ./my-workflow --non-interactive --trigger-index 0 --http-payload "@$file"; then
+  if cre -R "$ROOT_DIR" workflow simulate ./my-workflow -T "$TARGET" --non-interactive --trigger-index 0 --http-payload "@$file"; then
     echo "[PASS] $file"
     return 0
   fi

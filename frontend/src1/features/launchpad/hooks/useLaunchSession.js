@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LAUNCH_STORAGE_KEY, REPORT_STORAGE_KEY, TOAST_TTL_MS } from '../../../shared/constants/app';
+import {
+  DEX_SELECTION_STORAGE_KEY,
+  LAUNCH_STORAGE_KEY,
+  REPORT_STORAGE_KEY,
+  SUPPORTED_DEXES,
+  TOAST_TTL_MS,
+} from '../../../shared/constants/app';
 import { readJsonStorage, writeJsonStorage } from '../../../shared/utils/storage';
 
 function createToast(title, message) {
@@ -10,24 +16,45 @@ function createToast(title, message) {
   };
 }
 
+function findDexById(id) {
+  return SUPPORTED_DEXES.find((dex) => dex.id === id) ?? null;
+}
+
 export function useLaunchSession() {
   const [isLaunched, setIsLaunched] = useState(() => Boolean(readJsonStorage(LAUNCH_STORAGE_KEY, false)));
+  const [isDexSelectorOpen, setDexSelectorOpen] = useState(false);
+  const [selectedDexId, setSelectedDexId] = useState(() => String(readJsonStorage(DEX_SELECTION_STORAGE_KEY, '') || ''));
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isResultOpen, setResultOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [mintedReports, setMintedReports] = useState(() => readJsonStorage(REPORT_STORAGE_KEY, []));
+
+  const selectedDex = useMemo(() => findDexById(selectedDexId), [selectedDexId]);
 
   useEffect(() => {
     writeJsonStorage(LAUNCH_STORAGE_KEY, isLaunched);
   }, [isLaunched]);
 
   useEffect(() => {
+    writeJsonStorage(DEX_SELECTION_STORAGE_KEY, selectedDexId);
+  }, [selectedDexId]);
+
+  useEffect(() => {
     const onStorage = (event) => {
-      if (event.key !== LAUNCH_STORAGE_KEY || !event.newValue) return;
-      try {
-        setIsLaunched(Boolean(JSON.parse(event.newValue)));
-      } catch {
-        // no-op
+      if (event.key === LAUNCH_STORAGE_KEY && event.newValue) {
+        try {
+          setIsLaunched(Boolean(JSON.parse(event.newValue)));
+        } catch {
+          // no-op
+        }
+      }
+
+      if (event.key === DEX_SELECTION_STORAGE_KEY && event.newValue) {
+        try {
+          setSelectedDexId(String(JSON.parse(event.newValue) ?? ''));
+        } catch {
+          // no-op
+        }
       }
     };
 
@@ -35,7 +62,20 @@ export function useLaunchSession() {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  const launch = () => setIsLaunched(true);
+  const launch = () => {
+    setIsLaunched(true);
+    setDexSelectorOpen(true);
+  };
+
+  const closeDexSelector = () => setDexSelectorOpen(false);
+
+  const chooseDex = (dexId) => {
+    setSelectedDexId(dexId);
+    setDexSelectorOpen(false);
+    setIsLaunched(true);
+    setSidebarOpen(false);
+    setResultOpen(false);
+  };
 
   const pushToast = (title, message = '') => {
     const next = createToast(title, message);
@@ -63,12 +103,16 @@ export function useLaunchSession() {
 
   return {
     isLaunched,
+    isDexSelectorOpen,
+    selectedDex,
     isSidebarOpen,
     isResultOpen,
     toasts,
     mintedReports,
     reportCount,
     launch,
+    chooseDex,
+    closeDexSelector,
     setSidebarOpen,
     setResultOpen,
     pushToast,

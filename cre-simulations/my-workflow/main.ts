@@ -41,3 +41,13 @@ export const onHttpTrigger = async (runtime: any, context: any) => {
         };
     }
 };
+
+// cre-sdk-javy-plugin requires:
+//   1) `main` exported as a function declaration
+//   2) zero parameters on exported main
+export async function main() {
+    throw new Error(
+        "INCOMPATIBLE_CLI_RUNTIME: this workflow is written for legacy onHttpTrigger(runtime, context). " +
+        "Migrate to Runner.newRunner + HTTPCapability for cre-cli v1.3+, or use a legacy CRE CLI/runtime."
+    );
+}

@@ -1,44 +1,21 @@
-# workflow.yaml — Chainlink CRE Workflow definition
-#
-# This defines the HTTP trigger + compute step for the PreFlight off-chain
-# simulation. The frontend/extension POSTs to the DON-hosted endpoint and
-# receives the simulation result synchronously.
-#
-# Deploy with:  cre workflow deploy workflow.yaml --project-id <your-project-id>
+# ==========================================================================
+# CRE WORKFLOW SETTINGS FILE (cre-cli v1.3+)
+# ==========================================================================
+# This file provides target settings required by `cre workflow ... -T <target>`.
+# Use the TypeScript source entrypoint for cre-cli v1.3+.
 
-name: preflight-security-simulation
-version: "1"
+staging-settings:
+  user-workflow:
+    workflow-name: "preflight-security-simulation-staging"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: ""
+    secrets-path: ""
 
-triggers:
-  - id: http-trigger
-    type: httpTrigger
-    config:
-      method: POST
-      # The DON will assign a unique URL after deployment.
-
-workflow:
-  - id: run-simulation
-    uses: compute
-    trigger: http-trigger
-    config:
-      # Entry point — must match the export name in main.ts
-      entrypoint: my-workflow/main.ts
-      handler: onHttpTrigger
-
-      # Capabilities this workflow needs
-      capabilities:
-        - evm:
-            networks:
-              - arbitrum-mainnet
-        - http:
-            allowedDomains:
-              - api.arbiscan.io
-              # Chainlink feeds are read via evm.read(), not HTTP
-
-      # Runtime limits
-      timeout: 30000     # 30s max per simulation
-      maxRetries: 1
-
-      # Environment variables injected at runtime (set via `cre secrets set`)
-      env:
-        - ARBISCAN_API_KEY
+production-settings:
+  user-workflow:
+    workflow-name: "preflight-security-simulation-production"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: ""
+    secrets-path: ""
