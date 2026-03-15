@@ -1,82 +1,89 @@
 # PreFlight Frontend
 
-## What
-PreFlight frontend is a security-first transaction execution interface.
-Users perform DEX actions inside PreFlight, not directly on external DEX tabs.
-Current DEX targets:
-1. Camelot (Arbitrum)
-2. SaucerSwap (Hedera)
+## What this frontend is
+PreFlight frontend is the public website for the extension-first version of the product.
+It is no longer a DEX host or iframe runtime.
 
-## Why
-PreFlight inserts a security checkpoint between "user action" and "wallet signature".
-It gives users a risk verdict before execution, with off-chain CRE simulation + on-chain checks.
+The website now has three responsibilities:
+1. Explain what PreFlight does and why it exists.
+2. Guide users through installing and activating the browser extension.
+3. Let connected users view their PreFlight report portfolio.
 
-## When
-Use PreFlight at the moment the user initiates swap/liquidity/vault actions and before signing.
+## Product model
+PreFlight is split into two user-facing surfaces:
+1. `frontend/` website
+   - Home
+   - Install guide
+   - Portfolio
+2. `extension/` browser runtime
+   - Runs on the real Camelot and SaucerSwap pages
+   - Intercepts transaction intent before signature
+   - Runs checks and shows the report UI on the live DEX page
 
-## How (Product Flow)
-1. User lands on Home page.
-2. User clicks Launch.
-3. Mid-sized modal appears: "Choose your DEX".
-4. User selects Camelot or SaucerSwap.
-5. Modal closes.
-6. DEX page becomes active (also visible in nav as `DEX`).
-7. DEX website is embedded inside PreFlight runtime page with URL bar on top.
-8. User interacts with DEX normally (swap/add/remove liquidity/etc).
-9. Transaction intent is intercepted and calldata/parameters are captured.
-10. PreFlight sidebar opens and runs checks chronologically.
-11. Large centered report modal appears with verdict.
-12. If report is stale (>10s view time), checks re-run.
-13. User mints RiskReport NFT.
-14. User executes through PreFlightRouter.
-15. Wallet signature prompt appears.
-16. PreFlightRouter executes on target DEX router/pools.
-17. Success popup is shown and auto-closes.
+This separation is intentional.
+Wallet-critical behavior belongs on the official DEX page where the extension can see the real transaction request.
 
-## Workflow Stages (Sidebar Timeline)
-1. Intercept transaction intent
-2. Decode calldata + parameters
-3. Off-chain CRE simulation
-4. On-chain guard checks
-5. Risk report generation
+## Current website pages
+### 1. Home
+The home page is the main trust surface.
+It explains:
+1. what PreFlight verifies
+2. why an extension is required
+3. which DEXs are supported first
+4. how the transaction verification workflow works
+5. what the website does versus what the extension does
 
-## User Interactions
-1. Launch button on Home
-2. DEX selection modal choice
-3. DEX runtime operations inside embedded DEX page
-4. Floating PreFlight icon (bottom-right on DEX page)
-5. Sidebar review + check run
-6. Report review + mint
-7. Execute transaction button
+### 2. Install
+The install page is for the Chrome unpacked demo flow.
+It shows:
+1. install checklist
+2. activation steps
+3. what users should expect on the live DEX page
+4. browser and compatibility notes
 
-## Runtime Rules
-1. Floating icon is visible on DEX page.
-2. Floating icon is clickable only after minimum intent fields are present.
-3. Sidebar is opened from icon click (or auto-open on intercepted calldata update).
-4. Success toast auto-clears in 3 seconds.
+### 3. Portfolio
+The portfolio page is wallet-gated.
+It shows:
+1. connected wallet identity
+2. on-chain RiskReport NFT discovery when configured
+3. locally cached report history
+4. reward point preview
 
-## Off-chain CRE Wiring
-`src1` sends CRE-compatible payloads from frontend intent data.
-Set:
+## Supported DEX coverage
+The website currently documents these first targets:
+1. Camelot on Arbitrum
+2. SaucerSwap on Hedera
+
+The extension architecture is designed so both can live under one browser extension shell while using separate protocol adapters where needed.
+
+## Workflow shown to users
+1. User installs the PreFlight extension from the website.
+2. User opens Camelot or SaucerSwap normally.
+3. User activates PreFlight from the extension popup.
+4. The extension injects its launcher and sidebar onto the supported DEX page.
+5. User interacts with the official DEX as usual.
+6. PreFlight intercepts the transaction intent before final wallet signature.
+7. Off-chain CRE checks and on-chain guard reads run.
+8. A report is shown to the user.
+9. User mints the report NFT.
+10. User executes through `PreFlightRouter`.
+
+## Environment configuration
+Optional environment variables:
 
 ```bash
-VITE_PREFLIGHT_SIM_URL=<CRE trigger URL>
-VITE_PREFLIGHT_SIM_FORMAT=cre
+VITE_PREFLIGHT_REPORT_NFT_ADDRESS=<deployed RiskReportNFT address>
+VITE_PREFLIGHT_EXTENSION_ID=<chrome extension id>
 ```
 
-Payload fields include:
-1. `type`, `opType`
-2. `from`
-3. `routerAddress` or `vaultAddress`
-4. `data` (calldata)
-5. amount/path fields by operation type
+`VITE_PREFLIGHT_REPORT_NFT_ADDRESS`
+- Enables on-chain report discovery on the portfolio page.
 
-## Important Constraint
-Full automatic interception from real third-party DEX pages across browser contexts requires extension runtime (content script + injected page hook).
-Current `src1` is prepared for this model and supports local runtime flow in the integrated DEX page.
+`VITE_PREFLIGHT_EXTENSION_ID`
+- Lets the site know an extension ID is configured for future handshake/status features.
 
-## Local Run
-Default frontend:
+## Local development
+Run the frontend normally:
 
 ```bash
 cd frontend
@@ -84,9 +91,22 @@ npm install
 npm run dev
 ```
 
-Run `src1` entry without replacing `src`:
+Build for production:
 
 ```bash
 cd frontend
-npm run dev -- --config .vite-src1.config.mjs
+npm run build
 ```
+
+Lint the codebase:
+
+```bash
+cd frontend
+npm run lint
+```
+
+## Notes
+1. `frontend/src` is now the single active website codebase.
+2. `frontend/src1` and the `src1`-only Vite config were removed.
+3. `contracts/` and `cre-simulations/` were intentionally left unchanged.
+4. Live DEX interception is planned for the separate `extension/` workspace, not the website.

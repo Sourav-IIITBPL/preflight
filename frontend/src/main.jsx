@@ -1,18 +1,17 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import './theme.css'; // Global Cyberpunk styles
-
-// Wagmi & Tanstack Query Setup
+import './theme.css';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { arbitrum } from 'wagmi/chains';
+import { injected } from 'wagmi/connectors';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const queryClient = new QueryClient();
 
-// Configuration for Arbitrum One
 const config = createConfig({
   chains: [arbitrum],
+  connectors: [injected()],
   transports: {
     [arbitrum.id]: http(),
   },

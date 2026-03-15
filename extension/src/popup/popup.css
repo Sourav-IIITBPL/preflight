@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-cyan: #00f2fe;
+  --color-brand-dark: #080808;
+  --color-brand-card: #111111;
+  --animate-pulse: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-family: Sora, Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply m-0 min-h-[540px] min-w-[380px] bg-brand-dark text-slate-100 antialiased;
+    background-color: var(--color-brand-dark);
+  }
+}
+
+@layer components {
+  .glass-card {
+    background: rgba(17, 17, 17, 0.82);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-left: 1px solid rgba(0, 242, 254, 0.2);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .btn-primary {
+    background-color: var(--color-brand-cyan);
+    color: #000;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-[11px] font-black uppercase tracking-[0.16em] transition-all duration-300 active:scale-95 hover:brightness-110 hover:shadow-[0_0_24px_rgba(0,242,254,0.3)];
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-white backdrop-blur-sm transition-all hover:border-white/20 hover:bg-white/10;
+  }
+
+  .panel-grid-bg {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.08; transform: scale(1); }
+  50% { opacity: 0.12; transform: scale(1.02); }
+}

@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "PreFlight",
+  "version": "0.1.0",
+  "description": "Extension-first transaction verification layer for official DEX pages.",
+  "permissions": ["storage", "tabs", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://app.camelot.exchange/*",
+    "https://*.camelot.exchange/*",
+    "https://www.saucerswap.finance/*",
+    "https://*.saucerswap.finance/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "PreFlight",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.camelot.exchange/*",
+        "https://*.camelot.exchange/*",
+        "https://www.saucerswap.finance/*",
+        "https://*.saucerswap.finance/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": [
+        "https://app.camelot.exchange/*",
+        "https://*.camelot.exchange/*",
+        "https://www.saucerswap.finance/*",
+        "https://*.saucerswap.finance/*"
+      ]
+    }
+  ]
+}
