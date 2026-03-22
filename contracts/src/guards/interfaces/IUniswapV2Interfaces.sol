@@ -1,5 +1,6 @@
 interface IUniswapV2Router {
     function factory() external view returns (address);
+    function WETH() external view returns (address);
 }
 
 interface IUniswapV2Factory {
@@ -16,5 +17,4 @@ interface IUniswapV2Pair {
     function factory() external view returns (address);
     function kLast() external view returns (uint256);
 }
-
 

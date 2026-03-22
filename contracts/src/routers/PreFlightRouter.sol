@@ -415,7 +415,6 @@ contract PreFlightRouter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         // Re-run guard + validate state hasn't changed since storeVaultCheck.
         vaultGuard.guardedDeposit(vault, amount, true, msg.sender);
 
-
         // Consume NFT — marks as CONSUMED (permanent audit record).
         riskNFT.consume(nftTokenId);
 
@@ -484,10 +483,8 @@ contract PreFlightRouter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(receiver != address(0), "ZERO_RECEIVER");
         _requireNFTPending(nftTokenId, msg.sender);
 
-
         // Fetch current result for policy.
         SwapGuardResult memory result = swapGuard.guardedexactTokentotoken(router, path, amountIn);
-      
 
         riskNFT.consume(nftTokenId);
 
@@ -544,11 +541,10 @@ contract PreFlightRouter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         }
     }
 
-    function _enforceSwapPolicy(
-        SwapGuardResult memory result,
-        ExecutionPolicy calldata policy,
-        bool allowSoftRisk
-    ) internal pure {
+    function _enforceSwapPolicy(SwapGuardResult memory result, ExecutionPolicy calldata policy, bool allowSoftRisk)
+        internal
+        pure
+    {
         // ── Absolute hard blocks ──────────────────────────────────────────
         require(!result.POOL_NOT_EXISTS, "GUARD: pool not exist");
         require(!result.ZERO_LIQUIDITY, "GUARD: zero liquidity");

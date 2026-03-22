@@ -8,21 +8,17 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import {TokenGuardResult, TokenGuard} from "./lib/TokenGuard.sol";
+import {ITokenGuard, TokenGuardResult} from "./interfaces/ITokenGuard.sol";
 
 /**
- * @title VaultGuard
- * @notice Pre-transaction security guard for ERC4626 vaults.
- *
- *  Workflow:
- *   1. User calls storeCheck(vault, amount, isDeposit)  — stores state fingerprint.
- *   2. In the same block, user calls guardedDeposit / guardedWithdraw.
- *      _validate() re-runs the check, compares fingerprint, reverts if state changed.
+ * @title  VaultGuard
+ * @notice Pre-transaction security guard for ERC-4626 vaults.
+ *         Supports all four ERC-4626 operations: deposit, mint, withdraw, redeem.
  *  Checks performed:
-    *   - Vault-level: whitelist, zero supply, donation attack, balance mismatch, share inflation
-    *   - Operation-level: zero shares/assets out, dust shares/assets, cap checks, exchange rate anomaly, preview vs convert mismatch
-    *   - Token-level: all TokenGuard checks on the vault's asset
-    *
+ *   - Vault-level: whitelist, zero supply, donation attack, balance mismatch, share inflation
+ *   - Operation-level: zero shares/assets out, dust shares/assets, cap checks, exchange rate anomaly, preview vs convert mismatch
+ *   - Token-level: all TokenGuard checks on the vault's asset
+ *
  */
 contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
@@ -48,16 +44,21 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
         TokenGuardResult tokenResult;
     }
 
+    // CONSTANTS //
+
     uint256 public constant MAX_BPS = 10_000;
     uint256 public constant MAX_DEVIATION_BPS = 500; // 5% — exchange rate tolerance
     uint256 public constant PREVIEW_TOLERANCE_BPS = 100; // 1% — previewDeposit vs convertToShares
-    uint256 public constant MIN_SHARES = 1e3;            
+    uint256 public constant MIN_SHARES = 1e3;
     uint256 public constant MIN_ASSETS = 1e3;
     /// Vault with zero supply but totalAssets > this is a donation-attack signal.
     uint256 public constant DONATION_THRESHOLD = 1 ether;
     /// If assets-per-share > this factor of the expected 1:1 base rate, flag inflation.
     uint256 public constant INFLATION_FACTOR = 100; // 100x base rate
 
+    // STORAGE VARIABLES //
+
+    ITokenGuard public tokenGuard;
     mapping(address => mapping(address => bytes)) public lastCheckEncoded;
     mapping(address => mapping(address => uint256)) public lastCheckBlock;
     mapping(address => bool) public isVaultWhitelisted;
@@ -71,8 +72,7 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
     event CheckStored(address indexed vault, address indexed user, uint256 blockNumber);
     event RouterAuthorized(address indexed router, bool authorized);
 
-
-        modifier onlyAuthorizedRouter() {
+    modifier onlyAuthorizedRouter() {
         require(authorizedRouters[msg.sender], "NOT_AUTHORIZED_ROUTER");
         _;
     }
@@ -81,14 +81,72 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
         _disableInitializers();
     }
 
-    function initialize() public initializer {
+    function initialize(address _tokenGuard) public initializer {
         __Ownable_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
+        tokenGuard = ITokenGuard(_tokenGuard);
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
+    //  EXTERNAL VIEW FUNCTIONS  //
+
+    /**
+     * @notice Returns the decoded last stored check for a vault + user.
+     */
+    function getLastCheck(address vault, address user)
+        external
+        view
+        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets, uint256 blockNumber)
+    {
+        bytes memory encoded = lastCheckEncoded[vault][user];
+        require(encoded.length > 0, "NO_CHECK_STORED");
+        (result, previewShares, previewAssets) = abi.decode(encoded, (VaultGuardResult, uint256, uint256));
+        blockNumber = lastCheckBlock[vault][user];
+    }
+
+    function getWhitelistedVaults() external view returns (address[] memory) {
+        return whitelistedVaults;
+    }
+
+    function isWhitelisted(address vault) public view returns (bool) {
+        return isVaultWhitelisted[vault];
+    }
+
+    /**
+     * @notice Standalone view-style check . Uses msg.sender for cap checks.
+     */
+    function checkVault(address vault, uint256 amount, bool isDeposit)
+        external
+        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
+    {
+        emit VaultCheckPerformed(vault, msg.sender);
+        return _checkVault(vault, amount, isDeposit, msg.sender);
+    }
+
+    // EXTERNAL FUNCTIONS (STATE-CHANGING) //
+    /**
+     * @notice Records the vault state fingerprint for the caller in this block.
+     *         Must be called in the same block as guardedDeposit / guardedWithdraw.
+     *
+     */
+    function storeCheck(address vault, address user, uint256 amount, bool isDeposit)
+        external
+        nonReentrant
+        onlyAuthorizedRouter
+        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
+    {
+        (VaultGuardResult memory res, uint256 pShares, uint256 pAssets) = _checkVault(vault, amount, isDeposit, user);
+
+        lastCheckEncoded[vault][user] = abi.encode(res, pShares, pAssets);
+        lastCheckBlock[vault][user] = block.number;
+
+        emit CheckStored(vault, user, block.number);
+        return (res, pShares, pAssets);
+    }
+
+    // INTERNAL FUNCTIONS
 
     /**
      * @notice Core check function that performs all validations and returns a comprehensive result struct.
@@ -98,7 +156,7 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
      * @param isDeposit true = deposit flow; false = redeem flow
      * @param user      Address performing the operation (used for cap checks)
      */
-    function _checkVault(address vault, uint256 amount, bool isDeposit , address user)
+    function _checkVault(address vault, uint256 amount, bool isDeposit, address user)
         internal
         view
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
@@ -106,7 +164,7 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
         IERC4626 v = IERC4626(vault);
         address asset = v.asset();
 
-        result.tokenResult = TokenGuard.checkToken(asset);
+        result.tokenResult = tokenGuard.checkToken(asset);
 
         uint256 totalAssets = v.totalAssets();
         uint256 totalSupply = v.totalSupply();
@@ -154,12 +212,10 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
             uint256 vaultRate = (normAssets * 1e18) / normSupply;
 
             if (isDeposit) {
-                
                 try v.maxDeposit(user) returns (uint256 cap) {
                     if (amount > cap) result.EXCEEDS_MAX_DEPOSIT = true;
                 } catch {}
 
-            
                 try v.previewDeposit(amount) returns (uint256 s) {
                     previewShares = s;
                 } catch {
@@ -170,7 +226,6 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
                 if (previewShares == 0) result.ZERO_SHARES_OUT = true;
                 if (previewShares < MIN_SHARES) result.DUST_SHARES = true;
 
-        
                 if (previewShares > 0) {
                     uint256 normShares = _normalize(previewShares, vaultDec);
                     uint256 normAmount = _normalize(amount, assetDec);
@@ -191,7 +246,6 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
                     }
                 } catch {}
             } else {
-              
                 try v.maxRedeem(user) returns (uint256 cap) {
                     if (amount > cap) result.EXCEEDS_MAX_REDEEM = true;
                 } catch {}
@@ -227,107 +281,11 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
             }
         }
     }
-    /**
-     * @notice Standalone view-style check .Use this for off-chain simulation or UI display.
-     *         Uses msg.sender for cap checks.
-     */
-    function checkVault(address vault, uint256 amount, bool isDeposit)
-        external
-        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
-    {
 
-        emit VaultCheckPerformed(vault, msg.sender);
-        return _checkVault(vault, amount, isDeposit, msg.sender);
-        
-    }
-
-// EXTERNAL FUNCTIONS (STATE-CHANGING)
-    /**
-     * @notice Records the vault state fingerprint for the caller in this block.
-     *         Must be called in the same block as guardedDeposit / guardedWithdraw.
-     *
-     */
-    function storeCheck(address vault, address user,uint256 amount, bool isDeposit)
-        external
-        nonReentrant
-         onlyAuthorizedRouter
-        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
-    {
-        (VaultGuardResult memory res, uint256 pShares, uint256 pAssets) =
-            _checkVault(vault, amount, isDeposit, user);
-
-        lastCheckEncoded[vault][user] = abi.encode(res, pShares, pAssets);
-        lastCheckBlock[vault][user] = block.number;
-
-        emit CheckStored(vault, user, block.number);
-        return (res, pShares, pAssets);
-    }
-
-    /**
-     * @notice Deposit assets into vault after validating state is unchanged.
-     * @param vault     ERC4626 vault
-    * @param user      Address performing the deposit
-     * @param amount    Asset amount to deposit
-     * @param receiver  Address to receive shares
-     * @param minShares Slippage protection — revert if shares minted < minShares
-     * @return shares   Shares minted
-     */
-    function guardedDeposit(address vault, address user,uint256 amount, address receiver, uint256 minShares)
-        external
-        nonReentrant
-         onlyAuthorizedRouter
-        returns (uint256 shares)
-    {
-        _validate(vault,user, amount, true);
-
-        IERC20 asset = IERC20(IERC4626(vault).asset());
-        require(asset.balanceOf(address(this)) >= amount, "INSUFFICIENT_BALANCE");
-
-        //Use forceApprove to handle tokens that require approval reset before re-approve.
-        asset.forceApprove(vault, amount);
-
-        shares = IERC4626(vault).deposit(amount, receiver);
-
-
-        require(shares > 0, "ZERO_SHARES_MINTED");
-        require(shares >= minShares, "SLIPPAGE_TOO_HIGH");
-    }
-
-    /**
-     * @notice Redeem shares from vault after validating state is unchanged.
-     *
-     * @param vault      ERC4626 vault
-     * @param user       Address performing the redeem
-     * @param shares     Share amount to burn
-     * @param receiver   Address to receive assets
-     * @param minAssets  Slippage protection — revert if assets received < minAssets
-     * @return assets    Assets received
-     */
-    function guardedRedeem(address vault,address user ,uint256 shares, address receiver, uint256 minAssets)
-        external
-        nonReentrant
-        onlyAuthorizedRouter
-        returns (uint256 assets)
-    {
-        _validate(vault,user, shares, false);
-        require(IERC20(vault).balanceOf(address(this)) >= shares,"INSUFFICIENT_SHARES");
-
-            //Use forceApprove to handle tokens that require approval reset before re-approve.
-        IERC20(vault).forceApprove(vault, shares);
-
-        assets = IERC4626(vault).redeem(shares, receiver,address(this));
-        
-        require(assets > 0, "ZERO_ASSETS_RETURNED");
-        require(assets >= minAssets, "SLIPPAGE_TOO_HIGH");
-    }
-
-    // INTERNAL FUNCTIONS
-
-    function _validate(address vault,address user, uint256 amount, bool isDeposit) internal view {
+    function _validate(address vault, address user, uint256 amount, bool isDeposit) internal view {
         require(lastCheckBlock[vault][user] == block.number, "STALE_CHECK");
 
-        (VaultGuardResult memory res, uint256 pShares, uint256 pAssets) =
-            _checkVault(vault, amount, isDeposit, user);
+        (VaultGuardResult memory res, uint256 pShares, uint256 pAssets) = _checkVault(vault, amount, isDeposit, user);
 
         bytes32 currentFingerprint = keccak256(abi.encode(res, pShares, pAssets));
         bytes32 storedFingerprint = keccak256(lastCheckEncoded[vault][user]);
@@ -335,31 +293,7 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
         require(currentFingerprint == storedFingerprint, "VAULT_STATE_CHANGED");
     }
 
-// EXTERNAL VIEW FUNCTIONS
-
-    /**
-     * @notice Returns the decoded last stored check for a vault + user.
-     */
-    function getLastCheck(address vault, address user)
-        external
-        view
-        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets, uint256 blockNumber)
-    {
-        bytes memory encoded = lastCheckEncoded[vault][user];
-        require(encoded.length > 0, "NO_CHECK_STORED");
-        (result, previewShares, previewAssets) = abi.decode(encoded, (VaultGuardResult, uint256, uint256));
-        blockNumber = lastCheckBlock[vault][user];
-    }
-
-    function getWhitelistedVaults() external view returns (address[] memory) {
-        return whitelistedVaults;
-    }
-
-    function isWhitelisted(address vault) public view returns (bool) {
-        return isVaultWhitelisted[vault];
-    }
-
-  // OWNER-ONLY FUNCTIONS
+    // OWNER-ONLY FUNCTIONS
 
     function whitelistVault(address vault) external onlyOwner {
         require(vault != address(0), "ZERO_ADDRESS");
@@ -400,15 +334,13 @@ contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgra
         emit VaultRemoved(vault);
     }
 
-
-      function setAuthorizedRouter(address router, bool authorized) external onlyOwner {
+    function setAuthorizedRouter(address router, bool authorized) external onlyOwner {
         require(router != address(0), "ZERO_ADDRESS");
         authorizedRouters[router] = authorized;
         emit RouterAuthorized(router, authorized);
     }
 
-
-// INTERNAL HELPER FUNCTIONS
+    // INTERNAL HELPER FUNCTIONS
 
     function _safeDecimals(address token) internal view returns (uint8) {
         try IERC20Metadata(token).decimals() returns (uint8 d) {

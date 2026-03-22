@@ -17,14 +17,10 @@ contract DeployVaultGuard is Script {
         VaultGuard implementation = new VaultGuard();
 
         // 2️⃣ Encode initializer
-        bytes memory initData =
-            abi.encodeWithSelector(VaultGuard.initialize.selector);
+        bytes memory initData = abi.encodeWithSelector(VaultGuard.initialize.selector);
 
         // 3️⃣ Deploy Proxy
-        ERC1967Proxy proxy = new ERC1967Proxy(
-            address(implementation),
-            initData
-        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
 
         // 4️⃣ Cast proxy to VaultGuard interface
         VaultGuard vaultGuard = VaultGuard(address(proxy));

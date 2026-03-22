@@ -1,58 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC20,IOwnable,IPausable} from "./interfaces/ITokenGuard.sol";
-
-/**
- * @dev Imported by VaultGuard (and any other guard that needs token-level checks).
- *      All flags default to false (safe). True = risk signal.
- *
- *  Confidence levels are documented inline:
- *    [DEFINITE]   — checked via direct on-chain state read, no ambiguity
- *    [HEURISTIC]  — inferred from function existence / known patterns, not 100%
- */
-struct TokenGuardResult {
-    // ── Contract validity ─────────────────────────────────────────────────
-    bool NOT_A_CONTRACT; // [DEFINITE]  address has no code
-    bool EMPTY_BYTECODE; // [DEFINITE]  extcodesize == 0 (self-destructed / pre-deploy)
-    // ── ERC20 interface ───────────────────────────────────────────────────
-    bool DECIMALS_REVERT; // [DEFINITE]  decimals() reverts (non-standard token)
-    bool WEIRD_DECIMALS; // [DEFINITE]  decimals == 0 or > 18
-    bool HIGH_DECIMALS; // [DEFINITE]  decimals > 18  (overflow risk in math)
-    bool TOTAL_SUPPLY_REVERT; // [DEFINITE]  totalSupply() reverts
-    bool ZERO_TOTAL_SUPPLY; // [DEFINITE]  totalSupply == 0
-    bool VERY_LOW_TOTAL_SUPPLY; // [DEFINITE]  totalSupply < LOW_SUPPLY_THRESHOLD
-    bool SYMBOL_REVERT; // [DEFINITE]  symbol() reverts
-    bool NAME_REVERT; // [DEFINITE]  name() reverts
-    // ── Proxy / upgradeability ────────────────────────────────────────────
-    bool IS_EIP1967_PROXY; // [DEFINITE]  EIP-1967 implementation slot is non-zero
-    bool IS_EIP1822_PROXY; // [DEFINITE]  EIP-1822 PROXIABLE slot is non-zero
-    bool IS_MINIMAL_PROXY; // [DEFINITE]  EIP-1167 clone bytecode prefix detected
-    // ── Ownership / admin risk ────────────────────────────────────────────
-    bool HAS_OWNER; // [DEFINITE]  owner() returns a non-zero address
-    bool OWNERSHIP_RENOUNCED; // [DEFINITE]  owner() returns address(0) explicitly
-    bool OWNER_IS_EOA; // [DEFINITE]  owner address has no code (single key risk)
-    // ── Pause / freeze ────────────────────────────────────────────────────
-    bool IS_PAUSABLE; // [DEFINITE]  paused() function exists
-    bool IS_CURRENTLY_PAUSED; // [DEFINITE]  paused() returns true right now
-    // ── Blacklist / blocklist ─────────────────────────────────────────────
-    bool HAS_BLACKLIST; // [HEURISTIC] blacklisted(address) or isBlacklisted(address)
-    bool HAS_BLOCKLIST; // [HEURISTIC] isBlocklisted(address) variant
-    // ── Fee-on-transfer ───────────────────────────────────────────────────
-    // NOTE: True fee-on-transfer detection requires an actual transfer.
-    // These are multi-signal heuristics. High confidence but NOT definitive.
-    bool POSSIBLE_FEE_ON_TRANSFER; // [HEURISTIC] fee-related getter functions found
-    bool HAS_TRANSFER_FEE_GETTER; // [HEURISTIC] transferFee() / buyFee() / sellFee() found
-    bool HAS_TAX_FUNCTION; // [HEURISTIC] _taxFee() / taxRate() / getTax() found
-    // ── Rebasing ──────────────────────────────────────────────────────────
-    bool POSSIBLE_REBASING; // [HEURISTIC] rebase() / scaledBalanceOf() / gons found
-    // ── Supply manipulation risk ──────────────────────────────────────────
-    bool HAS_MINT_CAPABILITY; // [HEURISTIC] mint(address,uint256) selector exists in code
-    bool HAS_BURN_CAPABILITY; // [HEURISTIC] burn(uint256) or burnFrom() selector found
-    // ── Permit / flash-mint ───────────────────────────────────────────────
-    bool HAS_PERMIT; // [DEFINITE]  DOMAIN_SEPARATOR() and permit() both callable
-    bool HAS_FLASH_MINT; // [HEURISTIC] flashLoan() / flashMint() selector found
-}
+import {IERC20, IOwnable, IPausable} from "../interfaces/ITokenGuard.sol";
 
 /*//////////////////////////////////////////////////////////////
                         LIBRARY
@@ -74,7 +23,6 @@ struct TokenGuardResult {
  *    selectors we look for are very specific to fee/tax token patterns.
  */
 library TokenGuard {
-
     /// Tokens with totalSupply below this are suspicious (dust / test tokens).
     uint256 internal constant LOW_SUPPLY_THRESHOLD = 1_000e6; // 1000 units at 6 decimals
 
@@ -89,13 +37,12 @@ library TokenGuard {
     // 0x363d3d373d3d3d363d73 ... <20 byte address> ... 5af43d82803e903d91602b57fd5bf3
     bytes10 internal constant EIP1167_PREFIX = 0x363d3d373d3d3d363d73;
 
-
     /**
      * @notice Run all token checks against `token`. Returns a fully populated
      *         TokenGuardResult struct. All false = clean.
      * @param token ERC20 token contract address to inspect.
      */
-    function checkToken(address token) internal view returns (TokenGuardResult memory r) {
+    function checkToken(address token) external view returns (TokenGuardResult memory r) {
         // ── 1. Basic contract existence ──────────────────────────────────
         uint256 codeSize = _codeSize(token);
 
@@ -136,7 +83,6 @@ library TokenGuard {
         _checkFlashMint(token, r);
     }
 
-
     function _checkERC20Interface(address token, TokenGuardResult memory r) private view {
         // decimals()
         try IERC20(token).decimals() returns (uint8 d) {
@@ -170,8 +116,6 @@ library TokenGuard {
         }
     }
 
-    
-
     function _checkProxy(address token, uint256 codeSize, TokenGuardResult memory r) private view {
         // EIP-1967: read the implementation slot directly from storage.
         address impl1967 = address(uint160(uint256(_readSlot(token, EIP1967_IMPL_SLOT))));
@@ -198,8 +142,6 @@ library TokenGuard {
         }
     }
 
-    
-
     function _checkOwnership(address token, TokenGuardResult memory r) private view {
         try IOwnable(token).owner() returns (address o) {
             if (o == address(0)) {
@@ -218,8 +160,6 @@ library TokenGuard {
         }
     }
 
-    
-
     function _checkPausable(address token, TokenGuardResult memory r) private view {
         try IPausable(token).paused() returns (bool isPaused) {
             r.IS_PAUSABLE = true;
@@ -228,8 +168,6 @@ library TokenGuard {
             // No paused() function — not pausable (or non-standard).
         }
     }
-
-    
 
     function _checkBlacklist(address token, TokenGuardResult memory r) private view {
         // Pattern 1: blacklisted(address)
@@ -250,8 +188,6 @@ library TokenGuard {
             r.HAS_BLOCKLIST = true;
         }
     }
-
-  
 
     /**
      * @dev Fee-on-transfer heuristics.
@@ -300,7 +236,6 @@ library TokenGuard {
         }
     }
 
-
     /**
      * @dev Rebasing token heuristics.
      *
@@ -323,8 +258,6 @@ library TokenGuard {
 
         if (rebase) r.POSSIBLE_REBASING = true;
     }
-
-    
 
     /**
      * @dev Mint / burn capability.
@@ -352,8 +285,6 @@ library TokenGuard {
         }
     }
 
-    
-
     /**
      * @dev EIP-2612 permit detection.
      *      Tokens with permit() allow gasless approvals which can be exploited
@@ -371,8 +302,6 @@ library TokenGuard {
         if (hasDomain && hasPermit) r.HAS_PERMIT = true;
     }
 
-    
-
     /**
      * @dev Flash mint detection.
      *      ERC-3156 flashLoan(address,address,uint256,bytes): 0x5cffe9de
@@ -386,7 +315,6 @@ library TokenGuard {
             r.HAS_FLASH_MINT = true;
         }
     }
-
 
     /**
      * @dev Returns the code size of an address.
