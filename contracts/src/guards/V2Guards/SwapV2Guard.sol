@@ -21,7 +21,7 @@ import {ITokenGuard, TokenGuardResult} from "../interfaces/ITokenGuard.sol";
 contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable, AutomationCompatibleInterface {
     /// @notice Full guard result. All flags default to false (safe).
     /// A true flag signals a risk condition. Callers should decide whether to proceed based on which flags are set and their risk tolerance.
-    struct GuardResultV2 {
+    struct SwapV2GuardResult {
         bool ROUTER_NOT_TRUSTED; // router not in our trusted list
         bool FACTORY_NOT_TRUSTED; // factory not in our trusted list
         bool DEEP_MULTIHOP; // path length > MAX_PATH_LEN
@@ -98,7 +98,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         address indexed user, address indexed router, bytes32 pathHash, bytes32 checkHash, uint256 blockNumber
     );
     event SwapCheckPerformed(
-        address indexed router, address[] indexed path, uint256 amountIn, GuardResultV2 indexed result
+        address indexed router, address[] indexed path, uint256 amountIn, SwapV2GuardResult indexed result
     );
 
     modifier onlyPreflightCaller() {
@@ -129,12 +129,12 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
      * @param path      Token path (e.g. [WETH, USDC] for a single-hop).
      * @param amountIn  The exact input amount for the swap (used for impact check).
      *                  Pass 0 to skip the impact check.
-     * @return result   GuardResultV2 flags struct. All false = clean.
+     * @return result   SwapV2GuardResult flags struct. All false = clean.
      */
     function swapCheckV2(address router, address[] calldata path, uint256 amountIn)
         external
         view
-        returns (GuardResultV2 memory result)
+        returns (SwapV2GuardResult memory result)
     {
         if (!trustedRouters[router]) {
             result.ROUTER_NOT_TRUSTED = true;
@@ -266,14 +266,14 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
      */
     function validateSwapCheck(address router, address[] calldata path, uint256 amountIn, address user) external view {
         require(lastCheckBlock[user][router] == block.number, "STALE_CHECK");
-        GuardResultV2 memory currentResult = swapCheckV2(router, path, amountIn);
+        SwapV2GuardResult memory currentResult = swapCheckV2(router, path, amountIn);
         bytes32 currentFingerprint = keccak256(abi.encode(currentResult));
         bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
         require(currentFingerprint == storedFingerprint, "SWAP_STATE_CHANGED");
     }
 
-    function getStoredCheck(address user, address router) external view returns (GuardResultV2) {
-        GuardResultV2 memory result = abi.decode(storedUserChecksPerRouter[user][router], (GuardResultV2));
+    function getStoredCheck(address user, address router) external view returns (SwapV2GuardResult) {
+        SwapV2GuardResult memory result = abi.decode(storedUserChecksPerRouter[user][router], (SwapV2GuardResult));
         require(result.tokenResult.length > 0, "NO_STORED_CHECK");
         return result;
     }
@@ -371,12 +371,12 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         external
         nonReentrant
         onlyPreflightCaller
-        returns (GuardResultV2)
+        returns (SwapV2GuardResult)
     {
         require(user != address(0), "INVALID_USER");
         require(amountIn > 0, "AMOUNT_IN_IS_ZERO");
 
-        GuardResultV2 memory result = swapCheckV2(router, path, amountIn);
+        SwapV2GuardResult memory result = swapCheckV2(router, path, amountIn);
         storedUserChecksPerRouter[user][router] = abi.encode(result);
         lastCheckBlock[user][router] = block.number;
 

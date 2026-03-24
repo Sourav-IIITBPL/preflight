@@ -1,0 +1,221 @@
+struct VaultGuardResult {
+    bool VAULT_NOT_WHITELISTED;
+    bool VAULT_ZERO_SUPPLY;
+    bool DONATION_ATTACK;
+    bool SHARE_INFLATION_RISK;
+    bool VAULT_BALANCE_MISMATCH;
+    bool EXCHANGE_RATE_ANOMALY;
+    bool PREVIEW_REVERT;
+    bool ZERO_SHARES_OUT;
+    bool ZERO_ASSETS_OUT;
+    bool DUST_SHARES;
+    bool DUST_ASSETS;
+    bool EXCEEDS_MAX_DEPOSIT;
+    bool EXCEEDS_MAX_REDEEM;
+    bool PREVIEW_CONVERT_MISMATCH;
+    TokenGuardResult tokenResult;
+}
+
+struct LiquidityV2GuardResult {
+    bool ROUTER_NOT_TRUSTED;
+    bool PAIR_NOT_EXISTS;
+    bool ZERO_LIQUIDITY;
+    bool LOW_LIQUIDITY;
+    bool LOW_LP_SUPPLY;
+    bool FIRST_DEPOSITOR_RISK;
+    bool SEVERE_IMBALANCE;
+    bool K_INVARIANT_BROKEN;
+    bool POOL_TOO_NEW;
+    bool AMOUNT_RATIO_DEVIATION;
+    bool HIGH_LP_IMPACT;
+    bool FLASHLOAN_RISK;
+    bool ZERO_LP_OUT;
+    bool ZERO_AMOUNTS_OUT;
+    bool DUST_LP;
+    TokenGuardResult tokenAResult;
+    TokenGuardResult tokenBResult;
+}
+
+struct SwapV2GuardResult {
+    bool ROUTER_NOT_TRUSTED;
+    bool FACTORY_NOT_TRUSTED;
+    bool DEEP_MULTIHOP;
+    bool DUPLICATE_TOKEN_IN_PATH;
+    bool POOL_NOT_EXISTS;
+    bool FACTORY_MISMATCH;
+    bool ZERO_LIQUIDITY;
+    bool LOW_LIQUIDITY;
+    bool LOW_LP_SUPPLY;
+    bool POOL_TOO_NEW;
+    bool SEVERE_IMBALANCE;
+    bool K_INVARIANT_BROKEN;
+    bool HIGH_SWAP_IMPACT;
+    bool FLASHLOAN_RISK;
+    bool PRICE_MANIPULATED;
+    TokenGuardResult[] tokenResult;
+}
+
+struct TokenGuardResult {
+    bool NOT_A_CONTRACT;
+    bool EMPTY_BYTECODE;
+    bool DECIMALS_REVERT;
+    bool WEIRD_DECIMALS;
+    bool HIGH_DECIMALS;
+    bool TOTAL_SUPPLY_REVERT;
+    bool ZERO_TOTAL_SUPPLY;
+    bool VERY_LOW_TOTAL_SUPPLY;
+    bool SYMBOL_REVERT;
+    bool NAME_REVERT;
+    bool IS_EIP1967_PROXY;
+    bool IS_EIP1822_PROXY;
+    bool IS_MINIMAL_PROXY;
+    bool HAS_OWNER;
+    bool OWNERSHIP_RENOUNCED;
+    bool OWNER_IS_EOA;
+    bool IS_PAUSABLE;
+    bool IS_CURRENTLY_PAUSED;
+    bool HAS_BLACKLIST;
+    bool HAS_BLOCKLIST;
+    bool POSSIBLE_FEE_ON_TRANSFER;
+    bool HAS_TRANSFER_FEE_GETTER;
+    bool HAS_TAX_FUNCTION;
+    bool POSSIBLE_REBASING;
+    bool HAS_MINT_CAPABILITY;
+    bool HAS_BURN_CAPABILITY;
+    bool HAS_PERMIT;
+    bool HAS_FLASH_MINT;
+}
+
+
+// Combined report structs and enums
+
+
+enum PolicyRiskCategory {
+    INFO,
+    WARNING,
+    MEDIUM,
+    CRITICAL
+}
+
+enum PolicyKind {
+    ERC4626,
+    SWAP_V2,
+    LIQUIDITY_V2
+}
+
+struct PolicyNormalizedOffChainResult {
+    bool valid;
+    uint8 riskScore;
+    bool hasDangerousDelegateCall;
+    bool hasSelfDestruct;
+    bool hasApprovalDrain;
+    bool hasOwnerSweep;
+    bool hasReentrancy;
+    bool hasUnexpectedCreate;
+    bool hasUpgradeCall;
+    bool isExitFrozen;
+    bool isRemovalFrozen;
+    bool isFirstDeposit;
+    bool isFeeOnTransfer;
+    bool anyOracleStale;
+    bool anyContractUnverified;
+    bool oracleDeviation;
+    bool simulationReverted;
+    uint16 priceImpactBps;
+    uint16 outputDiscrepancyBps;
+    uint16 ratioDeviationBps;
+}
+
+struct PolicyCoreView {
+    PolicyKind kind;
+    uint8 operation;
+    uint8 version;
+    PolicyRiskCategory finalCategory;
+    PolicyRiskCategory offChainCategory;
+    uint8 compositeScore;
+    uint8 onChainScore;
+    uint8 offChainScore;
+    uint8 onChainCriticalCount;
+    uint8 onChainWarningCount;
+    uint8 offChainInfoCount;
+    bool anyHardBlock;
+    bool offChainValid;
+    uint32 onChainFlagsPacked;
+    uint32 offChainFlagsPacked;
+    uint32 tokenFlagsPacked;
+    uint16 priceImpactBps;
+    uint16 outputDiscrepancyBps;
+    uint16 ratioDeviationBps;
+    uint8 tokenCriticalCount;
+    uint8 tokenWarningCount;
+    bool tokenRiskEvaluated;
+}
+
+struct PolicyOffChainView {
+    bool hasDangerousDelegateCall;
+    bool hasSelfDestruct;
+    bool hasApprovalDrain;
+    bool hasOwnerSweep;
+    bool hasReentrancy;
+    bool hasUnexpectedCreate;
+    bool hasUpgradeCall;
+    bool isExitFrozen;
+    bool isRemovalFrozen;
+    bool isFirstDeposit;
+    bool isFeeOnTransfer;
+    bool anyOracleStale;
+    bool anyContractUnverified;
+    bool oracleDeviation;
+    bool simulationReverted;
+}
+
+struct PolicyOnChainPack {
+    uint32 flagsPacked;
+    uint32 tokenFlagsPacked;
+    uint8 criticalCount;
+    uint8 warningCount;
+    uint8 tokenCriticalCount;
+    uint8 tokenWarningCount;
+    bool anyHardBlock;
+}
+
+struct PolicyTokenPack {
+    uint32 flagsPacked;
+    uint8 criticalCount;
+    uint8 warningCount;
+    bool anyHardBlock;
+    bool evaluated;
+}
+
+struct PolicyTokenFlagsView {
+    bool evaluated;
+    bool notAContract;
+    bool emptyBytecode;
+    bool decimalsRevert;
+    bool weirdDecimals;
+    bool highDecimals;
+    bool totalSupplyRevert;
+    bool zeroTotalSupply;
+    bool veryLowTotalSupply;
+    bool symbolRevert;
+    bool nameRevert;
+    bool isEip1967Proxy;
+    bool isEip1822Proxy;
+    bool isMinimalProxy;
+    bool hasOwner;
+    bool ownershipRenounced;
+    bool ownerIsEoa;
+    bool isPausable;
+    bool isCurrentlyPaused;
+    bool hasBlacklist;
+    bool hasBlocklist;
+    bool possibleFeeOnTransfer;
+    bool hasTransferFeeGetter;
+    bool hasTaxFunction;
+    bool possibleRebasing;
+    bool hasMintCapability;
+    bool hasBurnCapability;
+    bool hasPermit;
+    bool hasFlashMint;
+}
+

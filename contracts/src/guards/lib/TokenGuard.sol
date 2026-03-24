@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC20, IOwnable, IPausable} from "../interfaces/ITokenGuard.sol";
+import {TokenGuardResult,IERC20, IOwnable, IPausable} from "../interfaces/ITokenGuard.sol";
 
 /*//////////////////////////////////////////////////////////////
                         LIBRARY

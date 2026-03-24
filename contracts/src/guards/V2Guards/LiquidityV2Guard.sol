@@ -19,7 +19,7 @@ import {IUniswapV2Factory, IUniswapV2Pair, IUniswapV2Router} from "../interfaces
  *
  *  Phase 1 – [eth_call, zero gas]
  *      checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType)
- *      Returns a fully-populated LiquidityGuardResult. Inspect flags in the UI.
+ *      Returns a fully-populated LiquidityV2GuardResult. Inspect flags in the UI.
  *
  *  Phase 2 – [on-chain tx via PreFlightRouter]
  *      storeCheck(router, tokenA, tokenB, amountADesired, amountBDesired, user, operationType)
@@ -40,7 +40,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @dev All flags default to false (safe). true = risk signal.
      */
 
-    struct LiquidityGuardResult {
+    struct LiquidityV2GuardResult {
         bool ROUTER_NOT_TRUSTED;
         bool PAIR_NOT_EXISTS;
         bool ZERO_LIQUIDITY;
@@ -84,7 +84,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
     /// @notice Routers whose factory/pair combination is trusted by this guard.
     mapping(address => bool) public trustedRouters;
 
-    /// @dev user => router => abi.encode(LiquidityGuardResult) stored at check time.
+    /// @dev user => router => abi.encode(LiquidityV2GuardResult) stored at check time.
     mapping(address => mapping(address => bytes)) internal storedUserChecksPerRouter;
 
     /// @notice Addresses allowed to call storeCheck and validateCheck.
@@ -134,7 +134,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @param amountADesired For ADD/ADD_ETH: desired tokenA amount. For REMOVE: LP amount to burn.
      * @param amountBDesired For ADD: desired tokenB amount. Zero for remove ops.
      * @param operationType  Which of the four liquidity operations to validate.
-     * @return result        Fully-populated LiquidityGuardResult. All false = safe.
+     * @return result        Fully-populated LiquidityV2GuardResult. All false = safe.
      */
     function checkLiquidity(
         address user,
@@ -144,7 +144,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         uint256 amountADesired,
         uint256 amountBDesired,
         LiquidityOperationType operationType
-    ) external returns (LiquidityGuardResult memory result) {
+    ) external returns (LiquidityV2GuardResult memory result) {
         emit LiquidityCheckPerformed(user, tokenA, tokenB, operationType);
         return _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
     }
@@ -157,7 +157,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @param amountADesired ADD: tokenA desired in. REMOVE: LP tokens to burn.
      * @param amountBDesired ADD: tokenB desired in. REMOVE: 0 (unused).
      * @param operationType  Liquidity operation type.
-     * @return result        Populated LiquidityGuardResult struct.
+     * @return result        Populated LiquidityV2GuardResult struct.
      */
     function _checkLiquidity(
         address router,
@@ -166,7 +166,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         uint256 amountADesired,
         uint256 amountBDesired,
         LiquidityOperationType operationType
-    ) internal view returns (LiquidityGuardResult memory result) {
+    ) internal view returns (LiquidityV2GuardResult memory result) {
         if (!trustedRouters[router]) {
             result.ROUTER_NOT_TRUSTED = true;
         }
@@ -252,7 +252,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @param lpSupply  Current LP token total supply.
      * @param result    Result struct mutated in place.
      */
-    function _checkAdd(uint256 amountA, uint256 reserveA, uint256 lpSupply, LiquidityGuardResult memory result)
+    function _checkAdd(uint256 amountA, uint256 reserveA, uint256 lpSupply, LiquidityV2GuardResult memory result)
         private
         pure
     {
@@ -276,7 +276,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         uint256 reserveA,
         uint256 reserveB,
         uint256 lpSupply,
-        LiquidityGuardResult memory result
+        LiquidityV2GuardResult memory result
     ) private pure {
         if (lpAmount == 0 || lpAmount < MIN_LP) {
             result.DUST_LP = true;
@@ -299,7 +299,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @param amountBDesired ADD: tokenB desired. REMOVE: 0.
      * @param user           Address whose check is being stored.
      * @param operationType             Liquidity operation type.
-     * @return result        The LiquidityGuardResult at storage time.
+     * @return result        The LiquidityV2GuardResult at storage time.
      */
     function storeCheck(
         address router,
@@ -309,7 +309,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         uint256 amountBDesired,
         address user,
         LiquidityOperationType operationType
-    ) external nonReentrant onlyTrustedCaller returns (LiquidityGuardResult memory result) {
+    ) external nonReentrant onlyTrustedCaller returns (LiquidityV2GuardResult memory result) {
         result = _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
         storedUserChecksPerRouter[user][router] = abi.encode(result);
         lastCheckBlock[user][router] = block.number;
@@ -340,7 +340,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         LiquidityOperationType operationType
     ) external view {
         require(lastCheckBlock[user][router] == block.number, "STALE_LIQ_CHECK");
-        LiquidityGuardResult memory currentResult =
+        LiquidityV2GuardResult memory currentResult =
             _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
         bytes32 currentFingerprint = keccak256(abi.encode(currentResult));
         bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
@@ -352,14 +352,14 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @notice Returns the stored check result for a given user and router.
      * @param user   The address whose check was stored.
      * @param router The router used at check time.
-     * @return currentResult  The decoded LiquidityGuardResult stored for this user/router pair.
+     * @return currentResult  The decoded LiquidityV2GuardResult stored for this user/router pair.
      */
     function getStoredCheck(address user, address router)
         external
         view
-        returns (LiquidityGuardResult memory currentResult)
+        returns (LiquidityV2GuardResult memory currentResult)
     {
-        return abi.decode(storedUserChecksPerRouter[user][router], (LiquidityGuardResult));
+        return abi.decode(storedUserChecksPerRouter[user][router], (LiquidityV2GuardResult));
     }
 
     /// ADMIN FUNCTION ///

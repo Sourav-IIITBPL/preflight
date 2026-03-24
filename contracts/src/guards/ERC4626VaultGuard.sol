@@ -11,7 +11,7 @@ import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.
 import {ITokenGuard, TokenGuardResult} from "./interfaces/ITokenGuard.sol";
 
 /**
- * @title  VaultGuard
+ * @title  ERC4626VaultGuard
  * @notice Pre-transaction security guard for ERC-4626 vaults.
  *         Supports all four ERC-4626 operations: deposit, mint, withdraw, redeem.
  *  Checks performed:
@@ -20,7 +20,7 @@ import {ITokenGuard, TokenGuardResult} from "./interfaces/ITokenGuard.sol";
  *   - Token-level: all TokenGuard checks on the vault's asset
  *
  */
-contract VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
+contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
     struct VaultGuardResult {
