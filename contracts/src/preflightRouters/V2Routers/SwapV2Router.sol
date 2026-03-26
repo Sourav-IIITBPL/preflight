@@ -92,7 +92,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         bytes calldata offChainData
     )
         external
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
@@ -105,7 +104,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         bytes calldata offChainData
     )
         external
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
@@ -118,7 +116,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         bytes calldata offChainData
     )
         external
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         _requireStartsWithWeth(ammRouter, path);
@@ -132,7 +129,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         bytes calldata offChainData
     )
         external
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         _requireStartsWithWeth(ammRouter, path);
@@ -146,7 +142,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         bytes calldata offChainData
     )
         external
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         _requireEndsWithWeth(ammRouter, path);
@@ -160,7 +155,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         bytes calldata offChainData
     )
         external
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         _requireEndsWithWeth(ammRouter, path);
@@ -435,7 +429,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         SwapOpType operation
     )
         internal
-        view
         returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
         _validatePath(path);
@@ -468,7 +461,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 amountForCheck,
         bytes calldata offChainData,
         SwapOpType operation
-    ) internal view returns (uint256 packedRiskReport) {
+    ) internal returns (uint256 packedRiskReport) {
         _validatePath(path);
         SwapV2GuardResult memory result = swapGuard.swapCheckV2(ammRouter, path, amountForCheck);
         packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);

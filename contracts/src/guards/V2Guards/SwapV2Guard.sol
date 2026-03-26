@@ -86,7 +86,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     mapping(address => mapping(address => bytes)) internal storedUserChecksPerRouter;
     mapping(address => mapping(address => uint256)) public lastCheckBlock; // user => router => block number of last stored check (used to prevent replaying old checks)
 
-    /// @EVENTS
+    /// EVENTS
 
     event RouterTrustSet(address indexed router, bool status);
     event FactoryTrustSet(address indexed factory, bool status);
@@ -96,7 +96,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     event SnapshotBlockIntervalSet(uint256 blocks);
     event PreflightCallerSet(address indexed caller, bool authorized);
     event SwapCheckStored(
-        address indexed user, address indexed router, bytes32 pathHash, bytes32 checkHash, uint256 blockNumber
+        address indexed user, address indexed router, SwapV2GuardResult indexed result, uint256 blockNumber
     );
     event SwapCheckPerformed(
         address indexed router, address[] indexed path, uint256 amountIn, SwapV2GuardResult indexed result
@@ -112,7 +112,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     }
 
     function initialize(uint256 _snapshotBlockInterval, address _tokenGuard) public initializer {
-        __Ownable_init(msg.sender);
+        __Ownable_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
         snapshotBlockInterval = _snapshotBlockInterval == 0 ? 1 : _snapshotBlockInterval;
@@ -120,6 +120,41 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+
+    /**
+     * @notice Validate that pool state has not changed since storeSwapCheck.
+     *         Called by SwapV2Executor before executing swaps.
+     */
+    function validateSwapCheck(address router, address[] calldata path, uint256 amountIn, address user) external {
+        require(lastCheckBlock[user][router] == block.number, "STALE_CHECK");
+        SwapV2GuardResult memory currentResult = swapCheckV2(router, path, amountIn);
+        bytes32 currentFingerprint = keccak256(abi.encode(currentResult));
+        bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
+        require(currentFingerprint == storedFingerprint, "SWAP_STATE_CHANGED");
+    }
+
+    /**
+     * @notice Store swap state fingerprint for `user`. Called by PreFlightRouter.
+     *         The fingerprint covers pool reserves and TWAP snapshots for all hops.
+     */
+    function storeSwapCheck(address router, address[] calldata path, uint256 amountIn, address user)
+        external
+        nonReentrant
+        onlyPreflightCaller
+        returns (SwapV2GuardResult memory)
+    {
+        require(user != address(0), "INVALID_USER");
+        require(amountIn > 0, "AMOUNT_IN_IS_ZERO");
+
+        SwapV2GuardResult memory result = swapCheckV2(router, path, amountIn);
+        storedUserChecksPerRouter[user][router] = abi.encode(result);
+        lastCheckBlock[user][router] = block.number;
+
+        emit SwapCheckStored(user, router, result, block.number);
+        return result;
+    }
+
 
     // EXTERNAL VIEW FUNCTION //
 
@@ -133,8 +168,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
      * @return result   SwapV2GuardResult flags struct. All false = clean.
      */
     function swapCheckV2(address router, address[] calldata path, uint256 amountIn)
-        external
-        view
+        public
         returns (SwapV2GuardResult memory result)
     {
         if (!trustedRouters[router]) {
@@ -143,6 +177,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
         uint256 len = path.length;
         require(len >= 2, "PATH_TOO_SHORT");
+        result.tokenResult = new TokenGuardResult[](len);
 
         if (len > MAX_PATH_LEN) {
             result.DEEP_MULTIHOP = true;
@@ -191,13 +226,12 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
             }
 
             // this will check the token
-            TokenGuardResult memory tokenInResult = tokenGuard.checkToken(tokenIn);
-            result.tokenResult.push(tokenInResult);
+            result.tokenResult[i] = tokenGuard.checkToken(tokenIn);
 
             if (i == len - 2) {
                 // also check the final output token
-                TokenGuardResult memory tokenOutResult = tokenGuard.checkToken(tokenOut);
-                result.tokenResult.push(tokenOutResult);
+                result.tokenResult[i + 1] = tokenGuard.checkToken(tokenOut);
+            
             }
 
             address token0 = IUniswapV2Pair(pair).token0();
@@ -261,19 +295,8 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         emit SwapCheckPerformed(router, path, amountIn, result);
     }
 
-    /**
-     * @notice Validate that pool state has not changed since storeSwapCheck.
-     *         Called by SwapV2Executor before executing swaps.
-     */
-    function validateSwapCheck(address router, address[] calldata path, uint256 amountIn, address user) external view {
-        require(lastCheckBlock[user][router] == block.number, "STALE_CHECK");
-        SwapV2GuardResult memory currentResult = swapCheckV2(router, path, amountIn);
-        bytes32 currentFingerprint = keccak256(abi.encode(currentResult));
-        bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
-        require(currentFingerprint == storedFingerprint, "SWAP_STATE_CHANGED");
-    }
 
-    function getStoredCheck(address user, address router) external view returns (SwapV2GuardResult) {
+    function getStoredCheck(address user, address router) external view returns (SwapV2GuardResult memory) {
         SwapV2GuardResult memory result = abi.decode(storedUserChecksPerRouter[user][router], (SwapV2GuardResult));
         require(result.tokenResult.length > 0, "NO_STORED_CHECK");
         return result;
@@ -364,26 +387,6 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         }
     }
 
-    /**
-     * @notice Store swap state fingerprint for `user`. Called by PreFlightRouter.
-     *         The fingerprint covers pool reserves and TWAP snapshots for all hops.
-     */
-    function storeSwapCheck(address router, address[] calldata path, uint256 amountIn, address user)
-        external
-        nonReentrant
-        onlyPreflightCaller
-        returns (SwapV2GuardResult memory)
-    {
-        require(user != address(0), "INVALID_USER");
-        require(amountIn > 0, "AMOUNT_IN_IS_ZERO");
-
-        SwapV2GuardResult memory result = swapCheckV2(router, path, amountIn);
-        storedUserChecksPerRouter[user][router] = abi.encode(result);
-        lastCheckBlock[user][router] = block.number;
-
-        emit SwapCheckStored(user, router, result, block.number);
-        return result;
-    }
 
     //------------------------------// @INTERNAL PURE HELPER FUNCTIONS//-------------------------------------------//
 

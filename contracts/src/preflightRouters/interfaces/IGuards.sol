@@ -28,7 +28,6 @@ interface IERC4626VaultGuard {
 interface ISwapV2Guard {
     function swapCheckV2(address router, address[] calldata path, uint256 amountIn)
         external
-        view
         returns (SwapV2GuardResult memory result);
 
     function storeSwapCheck(address router, address[] calldata path, uint256 amountIn, address user)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
 /**
  * @dev All flags default to false (safe). True = risk signal.
  *

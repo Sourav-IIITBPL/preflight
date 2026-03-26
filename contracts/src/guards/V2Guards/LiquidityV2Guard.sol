@@ -242,9 +242,9 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         view
         returns (LiquidityV2GuardResult memory currentResult)
     {
-        return _unpacked(abi.decode(storedUserChecksPerRouter[user][router], uint96));
+        uint96 packed = abi.decode(storedUserChecksPerRouter[user][router], (uint96));
+        return _unpacked(packed);
     }
-
     /// INTERNAL FUNCTIONS ///
 
     /**
