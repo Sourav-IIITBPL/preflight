@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {PolicyRiskCategory,PolicyKind,PolicyNormalizedOffChainResult,PolicyCoreView,PolicyOffChainView,
-PolicyOnChainPack , PolicyTokenPack, PolicyTokenFlagsView } from "../types/OnChainTypes.sol";
+import {
+    ExtendedEconomicData,
+    PolicyRiskCategory,
+    PolicyKind,
+    PolicyNormalizedOffChainResult,
+    PolicyCoreView,
+    PolicyOffChainView,
+    PolicyOnChainPack,
+    PolicyTokenPack,
+    PolicyTokenFlagsView
+} from "../types/OnChainTypes.sol";
 import {VaultOffChainResult, VaultOpType} from "../types/OffChainTypes.sol";
-import {TokenGuardResult,VaultGuardResult} from "../types/OnChainTypes.sol";
-import {BaseRiskPolicy} from "./BaseRiskPolicy.sol";
+import {TokenGuardResult, VaultGuardResult} from "../types/OnChainTypes.sol";
+import {BaseRiskPolicy, EnhancedCoreView} from "./BaseRiskPolicy.sol";
 
 struct ERC4626OnChainView {
     bool vaultNotWhitelisted;
@@ -28,6 +37,7 @@ struct ERC4626DecodedRiskReport {
     PolicyCoreView core;
     PolicyOffChainView offChain;
     PolicyTokenFlagsView tokenRisk;
+    EnhancedCoreView enhancedView;
     VaultOpType operation;
     ERC4626OnChainView onChain;
 }
@@ -48,20 +58,29 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
     uint8 internal constant FLAG_EXCEEDS_MAX_REDEEM = 12;
     uint8 internal constant FLAG_PREVIEW_CONVERT_MISMATCH = 13;
 
-        function evaluate(
-        bytes calldata offChainData,
-        VaultGuardResult calldata onChainData,
-        VaultOpType operation
-    ) external pure returns (uint256 packedReport) {
+    /**
+     * @notice Full evaluation with token-level analysis.
+     *
+     * @param offChainData  ABI-encoded VaultOffChainResult from CRE simulation.
+     *                      Pass empty bytes if off-chain data is unavailable.
+     * @param onChainData   VaultGuardResult from ERC4626VaultGuard.checkVault.
+     * @param operation     VaultOpType: DEPOSIT | MINT | WITHDRAW | REDEEM.
+     * @return packedReport 256-bit packed report .
+     */
+
+    function evaluate(bytes calldata offChainData, VaultGuardResult memory onChainData, VaultOpType operation)
+        external
+        pure
+        returns (uint256 packedReport)
+    {
         return _evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult));
     }
 
-
-       function previewReport(
-        bytes calldata offChainData,
-        VaultGuardResult calldata onChainData,
-        VaultOpType operation
-    ) external pure returns (ERC4626DecodedRiskReport memory report) {
+    function previewReport(bytes calldata offChainData, VaultGuardResult calldata onChainData, VaultOpType operation)
+        external
+        pure
+        returns (ERC4626DecodedRiskReport memory report)
+    {
         return _decodeReport(_evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult)));
     }
 
@@ -69,10 +88,7 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         return _decodeReport(packedReport);
     }
 
-       function packOnChain(
-        VaultGuardResult calldata onChainData,
-        VaultOpType operation
-    )
+    function packOnChain(VaultGuardResult memory onChainData, VaultOpType operation)
         external
         pure
         returns (
@@ -100,21 +116,32 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
     function decodeOffChain(bytes calldata offChainData)
         external
         pure
-        returns (PolicyNormalizedOffChainResult memory normalized)
+        returns (PolicyNormalizedOffChainResult memory normalized, ExtendedEconomicData memory economicData)
     {
-        return _decodeOffChain(offChainData);
+        if (offChainData.length == 0) return (normalized, economicData);
+        VaultOffChainResult memory offChainReport = abi.decode(offChainData, (VaultOffChainResult));
+        normalized = _normalizeVault(offChainReport);
+        economicData = _extractVaultEconomic(offChainReport);
     }
 
     function _evaluatePacked(
         bytes calldata offChainData,
-        VaultGuardResult calldata onChainData,
+        VaultGuardResult memory onChainData,
         VaultOpType operation,
         PolicyTokenPack memory tokenPack
-    ) internal pure returns (uint256 packedReport) {
-        PolicyOnChainPack memory onChain = _packOnChain(onChainData, operation, tokenPack);
-        PolicyNormalizedOffChainResult memory offChain = _decodeOffChain(offChainData);
+    ) internal pure returns (uint256) {
+        PolicyNormalizedOffChainResult memory offChain;
+        ExtendedEconomicData memory economicData;
 
-        packedReport = _buildPackedPolicy(
+        if (offChainData.length > 0) {
+            VaultOffChainResult memory offchainReport = abi.decode(offChainData, (VaultOffChainResult));
+            offChain = _normalizeVault(offchainReport);
+            economicData = _extractVaultEconomic(offchainReport);
+        }
+
+        PolicyOnChainPack memory onChain = _packOnChain(onChainData, operation, tokenPack);
+
+        return _buildPackedPolicy(
             PolicyKind.ERC4626,
             uint8(operation),
             onChain.criticalCount,
@@ -122,15 +149,12 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
             onChain.anyHardBlock,
             onChain.flagsPacked,
             tokenPack,
-            offChain
+            offChain,
+            economicData
         );
     }
 
-    function _decodeReport(uint256 packedReport)
-        internal
-        pure
-        returns (ERC4626DecodedRiskReport memory report)
-    {
+    function _decodeReport(uint256 packedReport) internal pure returns (ERC4626DecodedRiskReport memory report) {
         (PolicyCoreView memory core, PolicyOffChainView memory offChain, PolicyTokenFlagsView memory tokenRisk) =
             _decodeBase(packedReport);
         _assertKind(core.kind, PolicyKind.ERC4626);
@@ -138,6 +162,7 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         report.core = core;
         report.offChain = offChain;
         report.tokenRisk = tokenRisk;
+        report.enhancedView = _decodeEnhanced(packedReport);
         report.operation = VaultOpType(core.operation);
         report.onChain = ERC4626OnChainView({
             vaultNotWhitelisted: _isFlagSet(core.onChainFlagsPacked, FLAG_VAULT_NOT_WHITELISTED),
@@ -157,11 +182,7 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         });
     }
 
-    function _packOnChain(
-        VaultGuardResult calldata onChainData,
-        VaultOpType operation,
-        PolicyTokenPack memory tokenPack
-    )
+    function _packOnChain(VaultGuardResult memory onChainData, VaultOpType operation, PolicyTokenPack memory tokenPack)
         internal
         pure
         returns (PolicyOnChainPack memory packed)
@@ -260,17 +281,11 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         return _toTokenPack(_packTokenFlags(tokenResult), true);
     }
 
-    function _decodeOffChain(bytes calldata offChainData)
+    function _normalizeVault(VaultOffChainResult memory offChainReport)
         internal
         pure
         returns (PolicyNormalizedOffChainResult memory normalized)
     {
-        if (offChainData.length == 0) {
-            return normalized;
-        }
-
-        bytes memory raw = offChainData;
-        VaultOffChainResult memory offChainReport = abi.decode(raw, (VaultOffChainResult));
         normalized.valid = offChainReport.simulatedAt != 0;
         normalized.riskScore = _capRiskScore(offChainReport.riskScore);
         normalized.hasDangerousDelegateCall = offChainReport.trace.hasDangerousDelegateCall;
@@ -297,5 +312,38 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
             )
         );
         normalized.ratioDeviationBps = 0;
+    }
+
+    /**
+     * @dev Extracts the rich numeric fields from VaultOffChainResult into ExtendedEconomicData.
+     *      These fields drive tiered scoring .
+     */
+    function _extractVaultEconomic(VaultOffChainResult memory offChainResult)
+        internal
+        pure
+        returns (ExtendedEconomicData memory eco)
+    {
+        eco.outputDiscrepancyBps = offChainResult.economic.outputDiscrepancyBps;
+        eco.sharePriceDriftBps = offChainResult.economic.sharePriceDriftBps;
+        eco.excessPullBps = offChainResult.economic.excessPullBps;
+        eco.assetOracleAge = offChainResult.economic.assetOracleAge;
+        eco.exitSimulatedOut = offChainResult.economic.exitSimulatedOut;
+
+        // Sweep: convert token amount to rough USD using assetPriceUSD (both 18-decimal).
+        // sweepAmount is raw token units; assetPriceUSD is USD per token × 1e18.
+        eco.sweepDetected = offChainResult.trace.hasOwnerSweep;
+        eco.sweepAmountUSD = (offChainResult.trace.sweepAmount > 0 && offChainResult.economic.assetPriceUSD > 0)
+            ? (offChainResult.trace.sweepAmount * offChainResult.economic.assetPriceUSD) / 1e18
+            : 0;
+
+        eco.upgradeCallDetected = offChainResult.trace.hasUpgradeCall;
+        eco.simulationReverted = offChainResult.economic.simulationReverted;
+        eco.isExitFrozen = offChainResult.economic.isExitFrozen;
+
+        // If isExitFrozen is false but exitSimulatedOut == 0, it's a stealth honeypot.
+        // Flag this as isExitFrozen so compound detection and honeypot scoring pick it up.
+        if (!eco.isExitFrozen && eco.exitSimulatedOut == 0 && offChainResult.simulatedAt != 0) {
+            eco.isExitFrozen = true;
+        }
     }
 }

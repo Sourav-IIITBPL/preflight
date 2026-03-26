@@ -13,6 +13,7 @@ import {ITokenGuard, TokenGuardResult} from "../interfaces/ITokenGuard.sol";
 
 /**
  * @title  SwapV2Guard
+ * @author Sourav-IITBPL
  * @notice Pre-transaction guard for Uniswap V2-compatible swaps or forked versions .
  *         Provides swapCheckV2 (view simulation), storeSwapCheckFor (fingerprint
  *         storage), and validateSwapFor (state-change detection before execution).
@@ -69,7 +70,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     /// If one reserve < this fraction of the other (bps), flag SEVERE_IMBALANCE.
     uint256 public constant SEVERE_IMBALANCE_BPS = 100; // 1% — very skewed
 
-    /// @STORAGE
+    /// STORAGE
 
     ITokenGuard public tokenGuard; // Address of the TokenGuard contract for token-level checks.
     address public automationForwarder; // Authorised Chainlink Automation forwarder address.
@@ -371,7 +372,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         external
         nonReentrant
         onlyPreflightCaller
-        returns (SwapV2GuardResult)
+        returns (SwapV2GuardResult memory)
     {
         require(user != address(0), "INVALID_USER");
         require(amountIn > 0, "AMOUNT_IN_IS_ZERO");

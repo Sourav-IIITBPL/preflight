@@ -14,6 +14,7 @@ import {IUniswapV2Factory, IUniswapV2Pair, IUniswapV2Router} from "../interfaces
  * @title  LiquidityGuard
  * @notice Pre-transaction safety guard for Uniswap V2 liquidity operations.
  *         Works for both token/token pairs and ETH pairs (via WETH substitution).
+ * @author Sourav-IITBPL
  *
  * @dev Three-phase flow:
  *
@@ -125,6 +126,28 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
+    /// ADMIN FUNCTION ///
+    /**
+     * @notice Whitelist or remove a Uniswap V2-compatible router.
+     * @param router The router address to configure.
+     * @param status true = trusted, false = untrusted.
+     */
+    function setTrustedRouter(address router, bool status) external onlyOwner {
+        trustedRouters[router] = status;
+        emit TrustedRoutersSet(router, status);
+    }
+
+    /**
+     * @notice Grant or revoke call permissions for storeCheck / validateCheck.
+     * @param caller     The address to configure.
+     * @param authorized true = allowed, false = blocked.
+     */
+    function setTrustedCaller(address caller, bool authorized) external onlyOwner {
+        require(caller != address(0), "ZERO_ADDRESS");
+        trustedCallers[caller] = authorized;
+        emit TrustedCallersAuthorized(caller, authorized);
+    }
+
     /**
      * @notice Run all  Core safety checks for a liquidity operation.
      * @param user           the user who is performing the operation.
@@ -148,6 +171,81 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         emit LiquidityCheckPerformed(user, tokenA, tokenB, operationType);
         return _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
     }
+
+    /**
+     * @notice Record the current pool state fingerprint for `user`.
+     *         MUST be called in the same block as the Phase 3 execution.
+     * @param router         Uniswap V2-compatible router.
+     * @param tokenA         First token. address(0) resolves to WETH.
+     * @param tokenB         Second token. address(0) resolves to WETH.
+     * @param amountADesired ADD: tokenA desired. REMOVE: LP amount.
+     * @param amountBDesired ADD: tokenB desired. REMOVE: 0.
+     * @param user           Address whose check is being stored.
+     * @param operationType             Liquidity operation type.
+     * @return result        The LiquidityV2GuardResult at storage time.
+     */
+    function storeCheck(
+        address router,
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        address user,
+        LiquidityOperationType operationType
+    ) external nonReentrant onlyTrustedCaller returns (LiquidityV2GuardResult memory result) {
+        result = _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
+        storedUserChecksPerRouter[user][router] = abi.encode(_packed(result));
+        lastCheckBlock[user][router] = block.number;
+
+        emit CheckStored(user, router, block.number);
+
+        return result;
+    }
+
+    /**
+     * @notice Validate stored fingerprint. Reverts if pool state changed since storeCheck.
+     * @param router         Must match value used in storeCheck.
+     * @param tokenA         Must match value used in storeCheck.
+     * @param tokenB         Must match value used in storeCheck.
+     * @param amountADesired Must match value used in storeCheck.
+     * @param amountBDesired Must match value used in storeCheck.
+     * @param user           Address whose fingerprint is being checked.
+     * @param operationType  Must match value used in storeCheck.
+     */
+
+    function validateCheck(
+        address router,
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        address user,
+        LiquidityOperationType operationType
+    ) external view {
+        require(lastCheckBlock[user][router] == block.number, "STALE_LIQ_CHECK");
+        LiquidityV2GuardResult memory currentResult =
+            _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
+        bytes32 currentFingerprint = keccak256(abi.encode(_packed(currentResult)));
+        bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
+
+        require(currentFingerprint == storedFingerprint, "LIQ_STATE_CHANGED");
+    }
+
+    /**
+     * @notice Returns the stored check result for a given user and router.
+     * @param user   The address whose check was stored.
+     * @param router The router used at check time.
+     * @return currentResult  The decoded LiquidityV2GuardResult stored for this user/router pair.
+     */
+    function getStoredCheck(address user, address router)
+        external
+        view
+        returns (LiquidityV2GuardResult memory currentResult)
+    {
+        return _unpacked(abi.decode(storedUserChecksPerRouter[user][router], uint96));
+    }
+
+    /// INTERNAL FUNCTIONS ///
 
     /**
      * @dev Internal check logic shared by checkLiquidity, storeCheck, and validateCheck.
@@ -225,16 +323,18 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
 
         if (uint32(block.timestamp) == lastBlockTimestamp) result.FLASHLOAN_RISK = true;
 
-        // Amount ratio deviation vs pool ratio
-        if (amountADesired > 0 && amountBDesired > 0 && reserveA > 0 && reserveB > 0) {
-            // Pool ratio: B per A (scaled 1e18)
-            uint256 poolRatio = (reserveB * 1e18) / reserveA;
-            uint256 inputRatio = (amountBDesired * 1e18) / amountADesired;
-            uint256 delta = poolRatio > inputRatio ? poolRatio - inputRatio : inputRatio - poolRatio;
-            if ((delta * MAX_BPS) / poolRatio > MAX_RATIO_DEVIATION) result.AMOUNT_RATIO_DEVIATION = true;
+        if (operationType == LiquidityOperationType.ADD || operationType == LiquidityOperationType.ADD_ETH) {
+            // Amount ratio deviation vs pool ratio
+            if (amountADesired > 0 && amountBDesired > 0 && reserveA > 0 && reserveB > 0) {
+                // Pool ratio: B per A (scaled 1e18)
+                uint256 poolRatio = (reserveB * 1e18) / reserveA;
+                uint256 inputRatio = (amountBDesired * 1e18) / amountADesired;
+                uint256 delta = poolRatio > inputRatio ? poolRatio - inputRatio : inputRatio - poolRatio;
+                if ((delta * MAX_BPS) / poolRatio > MAX_RATIO_DEVIATION) result.AMOUNT_RATIO_DEVIATION = true;
 
-            // LP impact: does this deposit materially move the pool?
-            if ((amountADesired * MAX_BPS) / reserveA > MAX_LP_IMPACT_BPS) result.HIGH_LP_IMPACT = true;
+                // LP impact: does this deposit materially move the pool?
+                if ((amountADesired * MAX_BPS) / reserveA > MAX_LP_IMPACT_BPS) result.HIGH_LP_IMPACT = true;
+            }
         }
 
         // Operation-specific checks
@@ -289,101 +389,6 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         }
     }
 
-    /**
-     * @notice Record the current pool state fingerprint for `user`.
-     *         MUST be called in the same block as the Phase 3 execution.
-     * @param router         Uniswap V2-compatible router.
-     * @param tokenA         First token. address(0) resolves to WETH.
-     * @param tokenB         Second token. address(0) resolves to WETH.
-     * @param amountADesired ADD: tokenA desired. REMOVE: LP amount.
-     * @param amountBDesired ADD: tokenB desired. REMOVE: 0.
-     * @param user           Address whose check is being stored.
-     * @param operationType             Liquidity operation type.
-     * @return result        The LiquidityV2GuardResult at storage time.
-     */
-    function storeCheck(
-        address router,
-        address tokenA,
-        address tokenB,
-        uint256 amountADesired,
-        uint256 amountBDesired,
-        address user,
-        LiquidityOperationType operationType
-    ) external nonReentrant onlyTrustedCaller returns (LiquidityV2GuardResult memory result) {
-        result = _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
-        storedUserChecksPerRouter[user][router] = abi.encode(result);
-        lastCheckBlock[user][router] = block.number;
-
-        emit CheckStored(user, router, block.number);
-
-        return result;
-    }
-
-    /**
-     * @notice Validate stored fingerprint. Reverts if pool state changed since storeCheck.
-     * @param router         Must match value used in storeCheck.
-     * @param tokenA         Must match value used in storeCheck.
-     * @param tokenB         Must match value used in storeCheck.
-     * @param amountADesired Must match value used in storeCheck.
-     * @param amountBDesired Must match value used in storeCheck.
-     * @param user           Address whose fingerprint is being checked.
-     * @param operationType  Must match value used in storeCheck.
-     */
-
-    function validateCheck(
-        address router,
-        address tokenA,
-        address tokenB,
-        uint256 amountADesired,
-        uint256 amountBDesired,
-        address user,
-        LiquidityOperationType operationType
-    ) external view {
-        require(lastCheckBlock[user][router] == block.number, "STALE_LIQ_CHECK");
-        LiquidityV2GuardResult memory currentResult =
-            _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
-        bytes32 currentFingerprint = keccak256(abi.encode(currentResult));
-        bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
-
-        require(currentFingerprint == storedFingerprint, "LIQ_STATE_CHANGED");
-    }
-
-    /**
-     * @notice Returns the stored check result for a given user and router.
-     * @param user   The address whose check was stored.
-     * @param router The router used at check time.
-     * @return currentResult  The decoded LiquidityV2GuardResult stored for this user/router pair.
-     */
-    function getStoredCheck(address user, address router)
-        external
-        view
-        returns (LiquidityV2GuardResult memory currentResult)
-    {
-        return abi.decode(storedUserChecksPerRouter[user][router], (LiquidityV2GuardResult));
-    }
-
-    /// ADMIN FUNCTION ///
-    /**
-     * @notice Whitelist or remove a Uniswap V2-compatible router.
-     * @param router The router address to configure.
-     * @param status true = trusted, false = untrusted.
-     */
-    function setTrustedRouter(address router, bool status) external onlyOwner {
-        trustedRouters[router] = status;
-        emit TrustedRoutersSet(router, status);
-    }
-
-    /**
-     * @notice Grant or revoke call permissions for storeCheck / validateCheck.
-     * @param caller     The address to configure.
-     * @param authorized true = allowed, false = blocked.
-     */
-    function setTrustedCaller(address caller, bool authorized) external onlyOwner {
-        require(caller != address(0), "ZERO_ADDRESS");
-        trustedCallers[caller] = authorized;
-        emit TrustedCallersAuthorized(caller, authorized);
-    }
-
     /// INTERNAL HELPER FUNCTIONS ///
     /**
      * @dev Safe decimals read — returns 18 if the token does not implement decimals().
@@ -408,5 +413,169 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         // token0Reserve < 1% of token1Reserve  OR  token1Reserve < 1% of token0Reserve
         return token0Reserve * 10_000 < token1Reserve * SEVERE_IMBALANCE_BPS
             || token1Reserve * 10_000 < token0Reserve * SEVERE_IMBALANCE_BPS;
+    }
+
+    function _packed(LiquidityV2GuardResult memory r) internal pure returns (uint96 result) {
+        // Liquidity flags (0–14)
+        if (r.ROUTER_NOT_TRUSTED) result |= uint96(1) << 0;
+        if (r.PAIR_NOT_EXISTS) result |= uint96(1) << 1;
+        if (r.ZERO_LIQUIDITY) result |= uint96(1) << 2;
+        if (r.LOW_LIQUIDITY) result |= uint96(1) << 3;
+        if (r.LOW_LP_SUPPLY) result |= uint96(1) << 4;
+        if (r.FIRST_DEPOSITOR_RISK) result |= uint96(1) << 5;
+        if (r.SEVERE_IMBALANCE) result |= uint96(1) << 6;
+        if (r.K_INVARIANT_BROKEN) result |= uint96(1) << 7;
+        if (r.POOL_TOO_NEW) result |= uint96(1) << 8;
+        if (r.AMOUNT_RATIO_DEVIATION) result |= uint96(1) << 9;
+        if (r.HIGH_LP_IMPACT) result |= uint96(1) << 10;
+        if (r.FLASHLOAN_RISK) result |= uint96(1) << 11;
+        if (r.ZERO_LP_OUT) result |= uint96(1) << 12;
+        if (r.ZERO_AMOUNTS_OUT) result |= uint96(1) << 13;
+        if (r.DUST_LP) result |= uint96(1) << 14;
+
+        TokenGuardResult memory a = r.tokenAResult;
+        TokenGuardResult memory b = r.tokenBResult;
+
+        // Token A (15–43)
+        if (a.NOT_A_CONTRACT) result |= uint96(1) << 15;
+        if (a.EMPTY_BYTECODE) result |= uint96(1) << 16;
+        if (a.DECIMALS_REVERT) result |= uint96(1) << 17;
+        if (a.WEIRD_DECIMALS) result |= uint96(1) << 18;
+        if (a.HIGH_DECIMALS) result |= uint96(1) << 19;
+        if (a.TOTAL_SUPPLY_REVERT) result |= uint96(1) << 20;
+        if (a.ZERO_TOTAL_SUPPLY) result |= uint96(1) << 21;
+        if (a.VERY_LOW_TOTAL_SUPPLY) result |= uint96(1) << 22;
+        if (a.SYMBOL_REVERT) result |= uint96(1) << 23;
+        if (a.NAME_REVERT) result |= uint96(1) << 24;
+        if (a.IS_EIP1967_PROXY) result |= uint96(1) << 25;
+        if (a.IS_EIP1822_PROXY) result |= uint96(1) << 26;
+        if (a.IS_MINIMAL_PROXY) result |= uint96(1) << 27;
+        if (a.HAS_OWNER) result |= uint96(1) << 28;
+        if (a.OWNERSHIP_RENOUNCED) result |= uint96(1) << 29;
+        if (a.OWNER_IS_EOA) result |= uint96(1) << 30;
+        if (a.IS_PAUSABLE) result |= uint96(1) << 31;
+        if (a.IS_CURRENTLY_PAUSED) result |= uint96(1) << 32;
+        if (a.HAS_BLACKLIST) result |= uint96(1) << 33;
+        if (a.HAS_BLOCKLIST) result |= uint96(1) << 34;
+        if (a.POSSIBLE_FEE_ON_TRANSFER) result |= uint96(1) << 35;
+        if (a.HAS_TRANSFER_FEE_GETTER) result |= uint96(1) << 36;
+        if (a.HAS_TAX_FUNCTION) result |= uint96(1) << 37;
+        if (a.POSSIBLE_REBASING) result |= uint96(1) << 38;
+        if (a.HAS_MINT_CAPABILITY) result |= uint96(1) << 39;
+        if (a.HAS_BURN_CAPABILITY) result |= uint96(1) << 40;
+        if (a.HAS_PERMIT) result |= uint96(1) << 41;
+        if (a.HAS_FLASH_MINT) result |= uint96(1) << 42;
+
+        // Token B (43–72)
+        if (b.NOT_A_CONTRACT) result |= uint96(1) << 43;
+        if (b.EMPTY_BYTECODE) result |= uint96(1) << 44;
+        if (b.DECIMALS_REVERT) result |= uint96(1) << 45;
+        if (b.WEIRD_DECIMALS) result |= uint96(1) << 46;
+        if (b.HIGH_DECIMALS) result |= uint96(1) << 47;
+        if (b.TOTAL_SUPPLY_REVERT) result |= uint96(1) << 48;
+        if (b.ZERO_TOTAL_SUPPLY) result |= uint96(1) << 49;
+        if (b.VERY_LOW_TOTAL_SUPPLY) result |= uint96(1) << 50;
+        if (b.SYMBOL_REVERT) result |= uint96(1) << 51;
+        if (b.NAME_REVERT) result |= uint96(1) << 52;
+        if (b.IS_EIP1967_PROXY) result |= uint96(1) << 53;
+        if (b.IS_EIP1822_PROXY) result |= uint96(1) << 54;
+        if (b.IS_MINIMAL_PROXY) result |= uint96(1) << 55;
+        if (b.HAS_OWNER) result |= uint96(1) << 56;
+        if (b.OWNERSHIP_RENOUNCED) result |= uint96(1) << 57;
+        if (b.OWNER_IS_EOA) result |= uint96(1) << 58;
+        if (b.IS_PAUSABLE) result |= uint96(1) << 59;
+        if (b.IS_CURRENTLY_PAUSED) result |= uint96(1) << 60;
+        if (b.HAS_BLACKLIST) result |= uint96(1) << 61;
+        if (b.HAS_BLOCKLIST) result |= uint96(1) << 62;
+        if (b.POSSIBLE_FEE_ON_TRANSFER) result |= uint96(1) << 63;
+        if (b.HAS_TRANSFER_FEE_GETTER) result |= uint96(1) << 64;
+        if (b.HAS_TAX_FUNCTION) result |= uint96(1) << 65;
+        if (b.POSSIBLE_REBASING) result |= uint96(1) << 66;
+        if (b.HAS_MINT_CAPABILITY) result |= uint96(1) << 67;
+        if (b.HAS_BURN_CAPABILITY) result |= uint96(1) << 68;
+        if (b.HAS_PERMIT) result |= uint96(1) << 69;
+        if (b.HAS_FLASH_MINT) result |= uint96(1) << 70;
+    }
+
+    function _unpacked(uint96 packed) internal pure returns (LiquidityV2GuardResult memory r) {
+        r.ROUTER_NOT_TRUSTED = (packed >> 0) & 1 == 1;
+        r.PAIR_NOT_EXISTS = (packed >> 1) & 1 == 1;
+        r.ZERO_LIQUIDITY = (packed >> 2) & 1 == 1;
+        r.LOW_LIQUIDITY = (packed >> 3) & 1 == 1;
+        r.LOW_LP_SUPPLY = (packed >> 4) & 1 == 1;
+        r.FIRST_DEPOSITOR_RISK = (packed >> 5) & 1 == 1;
+        r.SEVERE_IMBALANCE = (packed >> 6) & 1 == 1;
+        r.K_INVARIANT_BROKEN = (packed >> 7) & 1 == 1;
+        r.POOL_TOO_NEW = (packed >> 8) & 1 == 1;
+        r.AMOUNT_RATIO_DEVIATION = (packed >> 9) & 1 == 1;
+        r.HIGH_LP_IMPACT = (packed >> 10) & 1 == 1;
+        r.FLASHLOAN_RISK = (packed >> 11) & 1 == 1;
+        r.ZERO_LP_OUT = (packed >> 12) & 1 == 1;
+        r.ZERO_AMOUNTS_OUT = (packed >> 13) & 1 == 1;
+        r.DUST_LP = (packed >> 14) & 1 == 1;
+
+        TokenGuardResult memory a;
+        TokenGuardResult memory b;
+
+        a.NOT_A_CONTRACT = (packed >> 15) & 1 == 1;
+        a.EMPTY_BYTECODE = (packed >> 16) & 1 == 1;
+        a.DECIMALS_REVERT = (packed >> 17) & 1 == 1;
+        a.WEIRD_DECIMALS = (packed >> 18) & 1 == 1;
+        a.HIGH_DECIMALS = (packed >> 19) & 1 == 1;
+        a.TOTAL_SUPPLY_REVERT = (packed >> 20) & 1 == 1;
+        a.ZERO_TOTAL_SUPPLY = (packed >> 21) & 1 == 1;
+        a.VERY_LOW_TOTAL_SUPPLY = (packed >> 22) & 1 == 1;
+        a.SYMBOL_REVERT = (packed >> 23) & 1 == 1;
+        a.NAME_REVERT = (packed >> 24) & 1 == 1;
+        a.IS_EIP1967_PROXY = (packed >> 25) & 1 == 1;
+        a.IS_EIP1822_PROXY = (packed >> 26) & 1 == 1;
+        a.IS_MINIMAL_PROXY = (packed >> 27) & 1 == 1;
+        a.HAS_OWNER = (packed >> 28) & 1 == 1;
+        a.OWNERSHIP_RENOUNCED = (packed >> 29) & 1 == 1;
+        a.OWNER_IS_EOA = (packed >> 30) & 1 == 1;
+        a.IS_PAUSABLE = (packed >> 31) & 1 == 1;
+        a.IS_CURRENTLY_PAUSED = (packed >> 32) & 1 == 1;
+        a.HAS_BLACKLIST = (packed >> 33) & 1 == 1;
+        a.HAS_BLOCKLIST = (packed >> 34) & 1 == 1;
+        a.POSSIBLE_FEE_ON_TRANSFER = (packed >> 35) & 1 == 1;
+        a.HAS_TRANSFER_FEE_GETTER = (packed >> 36) & 1 == 1;
+        a.HAS_TAX_FUNCTION = (packed >> 37) & 1 == 1;
+        a.POSSIBLE_REBASING = (packed >> 38) & 1 == 1;
+        a.HAS_MINT_CAPABILITY = (packed >> 39) & 1 == 1;
+        a.HAS_BURN_CAPABILITY = (packed >> 40) & 1 == 1;
+        a.HAS_PERMIT = (packed >> 41) & 1 == 1;
+        a.HAS_FLASH_MINT = (packed >> 42) & 1 == 1;
+
+        b.NOT_A_CONTRACT = (packed >> 43) & 1 == 1;
+        b.EMPTY_BYTECODE = (packed >> 44) & 1 == 1;
+        b.DECIMALS_REVERT = (packed >> 45) & 1 == 1;
+        b.WEIRD_DECIMALS = (packed >> 46) & 1 == 1;
+        b.HIGH_DECIMALS = (packed >> 47) & 1 == 1;
+        b.TOTAL_SUPPLY_REVERT = (packed >> 48) & 1 == 1;
+        b.ZERO_TOTAL_SUPPLY = (packed >> 49) & 1 == 1;
+        b.VERY_LOW_TOTAL_SUPPLY = (packed >> 50) & 1 == 1;
+        b.SYMBOL_REVERT = (packed >> 51) & 1 == 1;
+        b.NAME_REVERT = (packed >> 52) & 1 == 1;
+        b.IS_EIP1967_PROXY = (packed >> 53) & 1 == 1;
+        b.IS_EIP1822_PROXY = (packed >> 54) & 1 == 1;
+        b.IS_MINIMAL_PROXY = (packed >> 55) & 1 == 1;
+        b.HAS_OWNER = (packed >> 56) & 1 == 1;
+        b.OWNERSHIP_RENOUNCED = (packed >> 57) & 1 == 1;
+        b.OWNER_IS_EOA = (packed >> 58) & 1 == 1;
+        b.IS_PAUSABLE = (packed >> 59) & 1 == 1;
+        b.IS_CURRENTLY_PAUSED = (packed >> 60) & 1 == 1;
+        b.HAS_BLACKLIST = (packed >> 61) & 1 == 1;
+        b.HAS_BLOCKLIST = (packed >> 62) & 1 == 1;
+        b.POSSIBLE_FEE_ON_TRANSFER = (packed >> 63) & 1 == 1;
+        b.HAS_TRANSFER_FEE_GETTER = (packed >> 64) & 1 == 1;
+        b.HAS_TAX_FUNCTION = (packed >> 65) & 1 == 1;
+        b.POSSIBLE_REBASING = (packed >> 66) & 1 == 1;
+        b.HAS_MINT_CAPABILITY = (packed >> 67) & 1 == 1;
+        b.HAS_BURN_CAPABILITY = (packed >> 68) & 1 == 1;
+        b.HAS_PERMIT = (packed >> 69) & 1 == 1;
+        b.HAS_FLASH_MINT = (packed >> 70) & 1 == 1;
+
+        r.tokenAResult = a;
+        r.tokenBResult = b;
     }
 }

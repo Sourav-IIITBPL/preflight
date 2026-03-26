@@ -6,14 +6,15 @@ import {SafeERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC
 import {Ownable} from "../../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "../../../lib/openzeppelin-contracts/contracts/security/ReentrancyGuard.sol";
 
-import {ISwapV2GuardRouter, SwapV2GuardCheckResult} from "../RouterDependencies.sol";
+import {ISwapV2Guard} from "../interfaces/IGuards.sol";
 import {IUniswapV2Router} from "../interfaces/IUniswapV2Interface.sol";
-import {
-    SwapV2RiskPolicy,
-    SwapV2GuardRiskInput,
-    SwapV2DecodedRiskReport
-} from "../../riskpolicies/SwapV2RiskPolicy.sol";
+import {SwapV2GuardResult} from "../../types/OnChainTypes.sol";
+import {SwapV2RiskPolicy, SwapV2DecodedRiskReport} from "../../riskpolicies/SwapV2RiskPolicy.sol";
 import {SwapOpType} from "../../types/OffChainTypes.sol";
+
+interface IRiskReportNFT {
+    function mint(uint256 packedRiskReport) external returns (uint256 tokenId);
+}
 
 contract SwapV2Router is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -22,40 +23,40 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
     error InvalidPath();
     error InvalidReceiver();
     error InvalidWethPath();
-    error InsufficientEthValue();
+    error InvalidEthValue();
 
-    struct SwapPreview {
-        SwapV2GuardCheckResult guardResult;
-        uint256 packedRiskReport;
-        SwapV2DecodedRiskReport decodedRiskReport;
-    }
-
-    ISwapV2GuardRouter public swapGuard;
+    ISwapV2Guard public swapGuard;
     SwapV2RiskPolicy public riskPolicy;
+    IRiskReportNFT public riskReportNFT;
 
     event SwapGuardUpdated(address indexed newGuard);
     event RiskPolicyUpdated(address indexed newRiskPolicy);
+    event RiskReportNFTUpdated(address indexed newRiskReportNFT);
     event SwapCheckStored(
-        address indexed user,
-        address indexed ammRouter,
-        bytes32 indexed pathHash,
-        uint256 checkAmountIn
-    );
-    event GuardedSwapExecuted(
         address indexed user,
         address indexed ammRouter,
         SwapOpType operation,
         bytes32 indexed pathHash,
+        uint256 amountForCheck,
+        uint256 packedRiskReport
+    );
+    event GuardedSwapExecuted(
+        address indexed user,
+        address indexed ammRouter,
+        address indexed receiver,
+        SwapOpType operation,
+        bytes32 pathHash,
         uint256 packedRiskReport
     );
 
-    constructor(address swapGuard_, address riskPolicy_) {
-        if (swapGuard_ == address(0) || riskPolicy_ == address(0)) {
+    constructor(address swapGuard_, address riskPolicy_, address riskReportNFT_) {
+        if (swapGuard_ == address(0) || riskPolicy_ == address(0) || riskReportNFT_ == address(0)) {
             revert ZeroAddress();
         }
 
-        swapGuard = ISwapV2GuardRouter(swapGuard_);
+        swapGuard = ISwapV2Guard(swapGuard_);
         riskPolicy = SwapV2RiskPolicy(riskPolicy_);
+        riskReportNFT = IRiskReportNFT(riskReportNFT_);
     }
 
     receive() external payable {}
@@ -64,7 +65,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         if (newGuard == address(0)) {
             revert ZeroAddress();
         }
-        swapGuard = ISwapV2GuardRouter(newGuard);
+        swapGuard = ISwapV2Guard(newGuard);
         emit SwapGuardUpdated(newGuard);
     }
 
@@ -76,31 +77,152 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         emit RiskPolicyUpdated(newRiskPolicy);
     }
 
-    function previewSwapRisk(
-        address ammRouter,
-        address[] calldata path,
-        uint256 checkAmountIn,
-        bytes calldata offChainData,
-        SwapOpType operation
-    ) external returns (SwapPreview memory preview) {
-        _validatePath(path);
-
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, checkAmountIn);
-        uint256 packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), operation);
-
-        preview.guardResult = guardResult;
-        preview.packedRiskReport = packedRiskReport;
-        preview.decodedRiskReport = riskPolicy.decode(packedRiskReport);
+    function setRiskReportNFT(address newRiskReportNFT) external onlyOwner {
+        if (newRiskReportNFT == address(0)) {
+            revert ZeroAddress();
+        }
+        riskReportNFT = IRiskReportNFT(newRiskReportNFT);
+        emit RiskReportNFTUpdated(newRiskReportNFT);
     }
 
-    function storeSwapCheck(address ammRouter, address[] calldata path, uint256 checkAmountIn)
+    function previewGuardedSwapExactTokensForTokens(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountIn,
+        bytes calldata offChainData
+    )
         external
-        returns (SwapV2GuardCheckResult memory guardResult)
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
-        _validatePath(path);
-        guardResult = swapGuard.storeSwapCheck(ammRouter, path, checkAmountIn, msg.sender);
-        emit SwapCheckStored(msg.sender, ammRouter, keccak256(abi.encode(path)), checkAmountIn);
+        return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
+    }
+
+    function previewGuardedSwapTokensForExactTokens(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountInMax,
+        bytes calldata offChainData
+    )
+        external
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
+    {
+        return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
+    }
+
+    function previewGuardedSwapExactETHForTokens(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountIn,
+        bytes calldata offChainData
+    )
+        external
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
+    {
+        _requireStartsWithWeth(ammRouter, path);
+        return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_ETH_IN);
+    }
+
+    function previewGuardedSwapETHForExactTokens(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountInMax,
+        bytes calldata offChainData
+    )
+        external
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
+    {
+        _requireStartsWithWeth(ammRouter, path);
+        return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_ETH_OUT);
+    }
+
+    function previewGuardedSwapExactTokensForETH(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountIn,
+        bytes calldata offChainData
+    )
+        external
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
+    {
+        _requireEndsWithWeth(ammRouter, path);
+        return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
+    }
+
+    function previewGuardedSwapTokensForExactETH(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountInMax,
+        bytes calldata offChainData
+    )
+        external
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
+    {
+        _requireEndsWithWeth(ammRouter, path);
+        return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
+    }
+
+    function storeAndMintSwapExactTokensForTokensCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountIn,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 packedRiskReport) {
+        return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
+    }
+
+    function storeAndMintSwapTokensForExactTokensCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountInMax,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 packedRiskReport) {
+        return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
+    }
+
+    function storeAndMintSwapExactETHForTokensCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountIn,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 packedRiskReport) {
+        _requireStartsWithWeth(ammRouter, path);
+        return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_ETH_IN);
+    }
+
+    function storeAndMintSwapETHForExactTokensCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountInMax,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 packedRiskReport) {
+        _requireStartsWithWeth(ammRouter, path);
+        return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_ETH_OUT);
+    }
+
+    function storeAndMintSwapExactTokensForETHCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountIn,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 packedRiskReport) {
+        _requireEndsWithWeth(ammRouter, path);
+        return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
+    }
+
+    function storeAndMintSwapTokensForExactETHCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountInMax,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 packedRiskReport) {
+        _requireEndsWithWeth(ammRouter, path);
+        return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
     }
 
     function guardedSwapExactTokensForTokens(
@@ -112,23 +234,18 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata offChainData
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
-        _validatePath(path);
         _validateReceiver(receiver);
 
         swapGuard.validateSwapCheck(ammRouter, path, amountIn, msg.sender);
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, amountIn);
-        packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), SwapOpType.EXACT_TOKENS_IN);
+        packedRiskReport = _evaluateSwapRisk(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(path[0]).forceApprove(ammRouter, amountIn);
-        amounts = IUniswapV2Router(ammRouter).swapExactTokensForTokens(
-            amountIn, amountOutMin, path, receiver, deadline
-        );
+        amounts = IUniswapV2Router(ammRouter).swapExactTokensForTokens(amountIn, amountOutMin, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
 
         emit GuardedSwapExecuted(
-            msg.sender, ammRouter, SwapOpType.EXACT_TOKENS_IN, keccak256(abi.encode(path)), packedRiskReport
+            msg.sender, ammRouter, receiver, SwapOpType.EXACT_TOKENS_IN, keccak256(abi.encode(path)), packedRiskReport
         );
     }
 
@@ -142,29 +259,23 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata offChainData
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
-        _validatePath(path);
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
 
         swapGuard.validateSwapCheck(ammRouter, path, amountInMax, msg.sender);
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, amountInMax);
-        packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), SwapOpType.EXACT_TOKENS_OUT);
+        packedRiskReport = _evaluateSwapRisk(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountInMax);
         IERC20(path[0]).forceApprove(ammRouter, amountInMax);
-        amounts = IUniswapV2Router(ammRouter).swapTokensForExactTokens(
-            amountOut, amountInMax, path, receiver, deadline
-        );
+        amounts = IUniswapV2Router(ammRouter).swapTokensForExactTokens(amountOut, amountInMax, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
 
-        uint256 refundAmount = amountInMax - amounts[0];
-        if (refundAmount > 0) {
-            IERC20(path[0]).safeTransfer(refundRecipient, refundAmount);
+        if (amountInMax > amounts[0]) {
+            IERC20(path[0]).safeTransfer(refundRecipient, amountInMax - amounts[0]);
         }
 
         emit GuardedSwapExecuted(
-            msg.sender, ammRouter, SwapOpType.EXACT_TOKENS_OUT, keccak256(abi.encode(path)), packedRiskReport
+            msg.sender, ammRouter, receiver, SwapOpType.EXACT_TOKENS_OUT, keccak256(abi.encode(path)), packedRiskReport
         );
     }
 
@@ -176,21 +287,21 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata offChainData
     ) external payable nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
-        _validatePath(path);
         _validateReceiver(receiver);
         _requireStartsWithWeth(ammRouter, path);
 
-        swapGuard.validateSwapCheck(ammRouter, path, msg.value, msg.sender);
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, msg.value);
-        packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), SwapOpType.EXACT_ETH_IN);
+        if (msg.value == 0) {
+            revert InvalidEthValue();
+        }
 
-        amounts = IUniswapV2Router(ammRouter).swapExactETHForTokens{value: msg.value}(
-            amountOutMin, path, receiver, deadline
-        );
+        swapGuard.validateSwapCheck(ammRouter, path, msg.value, msg.sender);
+        packedRiskReport = _evaluateSwapRisk(ammRouter, path, msg.value, offChainData, SwapOpType.EXACT_ETH_IN);
+
+        amounts =
+            IUniswapV2Router(ammRouter).swapExactETHForTokens{value: msg.value}(amountOutMin, path, receiver, deadline);
 
         emit GuardedSwapExecuted(
-            msg.sender, ammRouter, SwapOpType.EXACT_ETH_IN, keccak256(abi.encode(path)), packedRiskReport
+            msg.sender, ammRouter, receiver, SwapOpType.EXACT_ETH_IN, keccak256(abi.encode(path)), packedRiskReport
         );
     }
 
@@ -203,25 +314,21 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata offChainData
     ) external payable nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
-        _validatePath(path);
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
         _requireStartsWithWeth(ammRouter, path);
 
         if (msg.value == 0) {
-            revert InsufficientEthValue();
+            revert InvalidEthValue();
         }
 
         uint256 balanceBefore = address(this).balance - msg.value;
 
         swapGuard.validateSwapCheck(ammRouter, path, msg.value, msg.sender);
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, msg.value);
-        packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), SwapOpType.EXACT_ETH_OUT);
+        packedRiskReport = _evaluateSwapRisk(ammRouter, path, msg.value, offChainData, SwapOpType.EXACT_ETH_OUT);
 
-        amounts = IUniswapV2Router(ammRouter).swapETHForExactTokens{value: msg.value}(
-            amountOut, path, receiver, deadline
-        );
+        amounts =
+            IUniswapV2Router(ammRouter).swapETHForExactTokens{value: msg.value}(amountOut, path, receiver, deadline);
 
         uint256 refundAmount = address(this).balance - balanceBefore;
         if (refundAmount > 0) {
@@ -230,7 +337,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         }
 
         emit GuardedSwapExecuted(
-            msg.sender, ammRouter, SwapOpType.EXACT_ETH_OUT, keccak256(abi.encode(path)), packedRiskReport
+            msg.sender, ammRouter, receiver, SwapOpType.EXACT_ETH_OUT, keccak256(abi.encode(path)), packedRiskReport
         );
     }
 
@@ -243,24 +350,24 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata offChainData
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
-        _validatePath(path);
         _validateReceiver(receiver);
         _requireEndsWithWeth(ammRouter, path);
 
         swapGuard.validateSwapCheck(ammRouter, path, amountIn, msg.sender);
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, amountIn);
-        packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), SwapOpType.EXACT_TOKENS_FOR_ETH);
+        packedRiskReport = _evaluateSwapRisk(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(path[0]).forceApprove(ammRouter, amountIn);
-        amounts = IUniswapV2Router(ammRouter).swapExactTokensForETH(
-            amountIn, amountOutMin, path, receiver, deadline
-        );
+        amounts = IUniswapV2Router(ammRouter).swapExactTokensForETH(amountIn, amountOutMin, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
 
         emit GuardedSwapExecuted(
-            msg.sender, ammRouter, SwapOpType.EXACT_TOKENS_FOR_ETH, keccak256(abi.encode(path)), packedRiskReport
+            msg.sender,
+            ammRouter,
+            receiver,
+            SwapOpType.EXACT_TOKENS_FOR_ETH,
+            keccak256(abi.encode(path)),
+            packedRiskReport
         );
     }
 
@@ -274,38 +381,34 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata offChainData
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
-        _validatePath(path);
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
         _requireEndsWithWeth(ammRouter, path);
 
         swapGuard.validateSwapCheck(ammRouter, path, amountInMax, msg.sender);
-        SwapV2GuardCheckResult memory guardResult = swapGuard.swapCheckV2(ammRouter, path, amountInMax);
         packedRiskReport =
-            riskPolicy.evaluate(offChainData, _toRiskInput(guardResult), SwapOpType.TOKENS_FOR_EXACT_ETH);
+            _evaluateSwapRisk(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountInMax);
         IERC20(path[0]).forceApprove(ammRouter, amountInMax);
-        amounts = IUniswapV2Router(ammRouter).swapTokensForExactETH(
-            amountOut, amountInMax, path, receiver, deadline
-        );
+        amounts = IUniswapV2Router(ammRouter).swapTokensForExactETH(amountOut, amountInMax, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
 
-        uint256 refundAmount = amountInMax - amounts[0];
-        if (refundAmount > 0) {
-            IERC20(path[0]).safeTransfer(refundRecipient, refundAmount);
+        if (amountInMax > amounts[0]) {
+            IERC20(path[0]).safeTransfer(refundRecipient, amountInMax - amounts[0]);
         }
 
         emit GuardedSwapExecuted(
-            msg.sender, ammRouter, SwapOpType.TOKENS_FOR_EXACT_ETH, keccak256(abi.encode(path)), packedRiskReport
+            msg.sender,
+            ammRouter,
+            receiver,
+            SwapOpType.TOKENS_FOR_EXACT_ETH,
+            keccak256(abi.encode(path)),
+            packedRiskReport
         );
     }
 
-    function decodePackedRisk(uint256 packedRiskReport)
-        external
-        view
-        returns (SwapV2DecodedRiskReport memory report)
-    {
+    function decodePackedRisk(uint256 packedRiskReport) external view returns (SwapV2DecodedRiskReport memory report) {
         return riskPolicy.decode(packedRiskReport);
     }
 
@@ -324,28 +427,51 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         require(success, "ETH_RESCUE_FAILED");
     }
 
-    function _toRiskInput(SwapV2GuardCheckResult memory guardResult)
+    function _previewSwap(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountForCheck,
+        bytes calldata offChainData,
+        SwapOpType operation
+    )
         internal
-        pure
-        returns (SwapV2GuardRiskInput memory riskInput)
+        view
+        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
     {
-        riskInput = SwapV2GuardRiskInput({
-            ROUTER_NOT_TRUSTED: guardResult.ROUTER_NOT_TRUSTED,
-            FACTORY_NOT_TRUSTED: guardResult.FACTORY_NOT_TRUSTED,
-            DEEP_MULTIHOP: guardResult.DEEP_MULTIHOP,
-            DUPLICATE_TOKEN_IN_PATH: guardResult.DUPLICATE_TOKEN_IN_PATH,
-            POOL_NOT_EXISTS: guardResult.POOL_NOT_EXISTS,
-            FACTORY_MISMATCH: guardResult.FACTORY_MISMATCH,
-            ZERO_LIQUIDITY: guardResult.ZERO_LIQUIDITY,
-            LOW_LIQUIDITY: guardResult.LOW_LIQUIDITY,
-            LOW_LP_SUPPLY: guardResult.LOW_LP_SUPPLY,
-            POOL_TOO_NEW: guardResult.POOL_TOO_NEW,
-            SEVERE_IMBALANCE: guardResult.SEVERE_IMBALANCE,
-            K_INVARIANT_BROKEN: guardResult.K_INVARIANT_BROKEN,
-            HIGH_SWAP_IMPACT: guardResult.HIGH_SWAP_IMPACT,
-            FLASHLOAN_RISK: guardResult.FLASHLOAN_RISK,
-            PRICE_MANIPULATED: guardResult.PRICE_MANIPULATED
-        });
+        _validatePath(path);
+        result = swapGuard.swapCheckV2(ammRouter, path, amountForCheck);
+        packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
+        report = riskPolicy.decode(packedRiskReport);
+    }
+
+    function _storeAndMintSwapCheck(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountForCheck,
+        bytes calldata offChainData,
+        SwapOpType operation
+    ) internal returns (uint256 packedRiskReport) {
+        _validatePath(path);
+
+        SwapV2GuardResult memory result = swapGuard.storeSwapCheck(ammRouter, path, amountForCheck, msg.sender);
+        packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
+        riskReportNFT.mint(packedRiskReport);
+
+        emit SwapCheckStored(
+            msg.sender, ammRouter, operation, keccak256(abi.encode(path)), amountForCheck, packedRiskReport
+        );
+    }
+
+    function _evaluateSwapRisk(
+        address ammRouter,
+        address[] calldata path,
+        uint256 amountForCheck,
+        bytes calldata offChainData,
+        SwapOpType operation
+    ) internal view returns (uint256 packedRiskReport) {
+        _validatePath(path);
+        SwapV2GuardResult memory result = swapGuard.swapCheckV2(ammRouter, path, amountForCheck);
+        packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
     }
 
     function _validatePath(address[] calldata path) internal pure {
@@ -361,12 +487,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
     }
 
     function _requireStartsWithWeth(address ammRouter, address[] calldata path) internal view {
+        _validatePath(path);
         if (path[0] != IUniswapV2Router(ammRouter).WETH()) {
             revert InvalidWethPath();
         }
     }
 
     function _requireEndsWithWeth(address ammRouter, address[] calldata path) internal view {
+        _validatePath(path);
         if (path[path.length - 1] != IUniswapV2Router(ammRouter).WETH()) {
             revert InvalidWethPath();
         }

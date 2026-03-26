@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {PolicyRiskCategory,PolicyKind,PolicyNormalizedOffChainResult,PolicyCoreView,PolicyOffChainView,
-PolicyOnChainPack , PolicyTokenPack, PolicyTokenFlagsView } from "../types/OnChainTypes.sol";
+import {
+    ExtendedEconomicData,
+    PolicyRiskCategory,
+    PolicyKind,
+    PolicyNormalizedOffChainResult,
+    PolicyCoreView,
+    PolicyOffChainView,
+    PolicyOnChainPack,
+    PolicyTokenPack,
+    PolicyTokenFlagsView
+} from "../types/OnChainTypes.sol";
 import {LiquidityOffChainResult, LiquidityOpType} from "../types/OffChainTypes.sol";
-import {TokenGuardResult,LiquidityV2GuardResult} from "../types/OnChainTypes.sol";
-import {BaseRiskPolicy} from "./BaseRiskPolicy.sol";
-
+import {TokenGuardResult, LiquidityV2GuardResult} from "../types/OnChainTypes.sol";
+import {BaseRiskPolicy, EnhancedCoreView} from "./BaseRiskPolicy.sol";
 
 struct LiquidityV2OnChainView {
     bool routerNotTrusted;
@@ -30,6 +38,7 @@ struct LiquidityV2DecodedRiskReport {
     PolicyCoreView core;
     PolicyOffChainView offChain;
     PolicyTokenFlagsView tokenRisk;
+    EnhancedCoreView enhancedView;
     LiquidityOpType operation;
     LiquidityV2OnChainView onChain;
 }
@@ -51,21 +60,32 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
     uint8 internal constant FLAG_ZERO_AMOUNTS_OUT = 13;
     uint8 internal constant FLAG_DUST_LP = 14;
 
-    function evaluate(
-        bytes calldata offChainData,
-        LiquidityV2GuardResult calldata onChainData,
-        LiquidityOpType operation
-    ) external pure returns (uint256 packedReport) {
-        return _evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenAResult, onChainData.tokenBResult));
+    /**
+     * @notice Full evaluation with token-level analysis.
+     *
+     * @param offChainData  ABI-encoded LiquidityOffChainResult from CRE simulation.
+     * @param onChainData   Guard check result (flag booleans).
+     * @param operation     LiquidityOpType: ADD | ADD_ETH | REMOVE | REMOVE_ETH.
+     */
+    function evaluate(bytes calldata offChainData, LiquidityV2GuardResult memory onChainData, LiquidityOpType operation)
+        external
+        pure
+        returns (uint256 packedReport)
+    {
+        return _evaluatePacked(
+            offChainData, onChainData, operation, _tokenPack(onChainData.tokenAResult, onChainData.tokenBResult)
+        );
     }
 
-      function previewReport(
+    function previewReport(
         bytes calldata offChainData,
         LiquidityV2GuardResult calldata onChainData,
         LiquidityOpType operation
     ) external pure returns (LiquidityV2DecodedRiskReport memory report) {
         return _decodeReport(
-            _evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenAResult, onChainData.tokenBResult))
+            _evaluatePacked(
+                offChainData, onChainData, operation, _tokenPack(onChainData.tokenAResult, onChainData.tokenBResult)
+            )
         );
     }
 
@@ -73,9 +93,7 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         return _decodeReport(packedReport);
     }
 
-
-    function packOnChain(
-        LiquidityV2GuardResult calldata onChainData)
+    function packOnChain(LiquidityV2GuardResult memory onChainData)
         external
         pure
         returns (
@@ -88,7 +106,9 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
             uint8 tokenWarningCount
         )
     {
-        PolicyOnChainPack memory packed = _packOnChain(onChainData, _tokenPack(onChainData.tokenAResult,onChainData.tokenBResult));
+        PolicyOnChainPack memory packed = _packOnChain(
+            onChainData, _tokenPack(onChainData.tokenAResult, onChainData.tokenBResult)
+        );
         return (
             packed.flagsPacked,
             packed.tokenFlagsPacked,
@@ -103,21 +123,32 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
     function decodeOffChain(bytes calldata offChainData)
         external
         pure
-        returns (PolicyNormalizedOffChainResult memory normalized)
+        returns (PolicyNormalizedOffChainResult memory normalized, ExtendedEconomicData memory economicData)
     {
-        return _decodeOffChain(offChainData);
+        if (offChainData.length == 0) return (normalized, economicData);
+        LiquidityOffChainResult memory offChainReport = abi.decode(offChainData, (LiquidityOffChainResult));
+        normalized = _normalizeLiquidity(offChainReport);
+        economicData = _extractLiquidityEconomic(offChainReport);
     }
 
     function _evaluatePacked(
         bytes calldata offChainData,
-        LiquidityV2GuardResult calldata onChainData,
+        LiquidityV2GuardResult memory onChainData,
         LiquidityOpType operation,
         PolicyTokenPack memory tokenPack
     ) internal pure returns (uint256 packedReport) {
-        PolicyOnChainPack memory onChain = _packOnChain(onChainData, tokenPack);
-        PolicyNormalizedOffChainResult memory offChain = _decodeOffChain(offChainData);
+        PolicyNormalizedOffChainResult memory offChain;
+        ExtendedEconomicData memory economicData;
 
-        packedReport = _buildPackedPolicy(
+        if (offChainData.length > 0) {
+            LiquidityOffChainResult memory offChainReport = abi.decode(offChainData, (LiquidityOffChainResult));
+            offChain = _normalizeLiquidity(offChainReport);
+            economicData = _extractLiquidityEconomic(offChainReport);
+        }
+
+        PolicyOnChainPack memory onChain = _packOnChain(onChainData, tokenPack);
+
+        return _buildPackedPolicy(
             PolicyKind.LIQUIDITY_V2,
             uint8(operation),
             onChain.criticalCount,
@@ -125,15 +156,12 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
             onChain.anyHardBlock,
             onChain.flagsPacked,
             tokenPack,
-            offChain
+            offChain,
+            economicData
         );
     }
 
-    function _decodeReport(uint256 packedReport)
-        internal
-        pure
-        returns (LiquidityV2DecodedRiskReport memory report)
-    {
+    function _decodeReport(uint256 packedReport) internal pure returns (LiquidityV2DecodedRiskReport memory report) {
         (PolicyCoreView memory core, PolicyOffChainView memory offChain, PolicyTokenFlagsView memory tokenRisk) =
             _decodeBase(packedReport);
         _assertKind(core.kind, PolicyKind.LIQUIDITY_V2);
@@ -161,7 +189,7 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         });
     }
 
-    function _packOnChain(LiquidityV2GuardResult calldata onChainData, PolicyTokenPack memory tokenPack)
+    function _packOnChain(LiquidityV2GuardResult memory onChainData, PolicyTokenPack memory tokenPack)
         internal
         pure
         returns (PolicyOnChainPack memory packed)
@@ -250,17 +278,11 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         tokenPack = _toTokenPack(flagsPacked, true);
     }
 
-    function _decodeOffChain(bytes calldata offChainData)
+    function _normalizeLiquidity(LiquidityOffChainResult memory offChainReport)
         internal
         pure
         returns (PolicyNormalizedOffChainResult memory normalized)
     {
-        if (offChainData.length == 0) {
-            return normalized;
-        }
-
-        bytes memory raw = offChainData;
-        LiquidityOffChainResult memory offChainReport = abi.decode(raw, (LiquidityOffChainResult));
         normalized.valid = offChainReport.simulatedAt != 0;
         normalized.riskScore = _capRiskScore(offChainReport.riskScore);
         normalized.hasDangerousDelegateCall = offChainReport.trace.hasDangerousDelegateCall;
@@ -271,16 +293,72 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         normalized.hasUnexpectedCreate = offChainReport.trace.hasUnexpectedCreate;
         normalized.hasUpgradeCall = false;
         normalized.isExitFrozen = false;
-        normalized.isRemovalFrozen = offChainReport.economic.isRemovalFrozen;
+
+        bool stealthRemovalHoneypot = !offChainReport.economic.isRemovalFrozen
+            && offChainReport.economic.removalSimAmountA == 0 && offChainReport.economic.removalSimAmountB == 0
+            && offChainReport.simulatedAt != 0;
+
+        normalized.isRemovalFrozen = offChainReport.economic.isRemovalFrozen || stealthRemovalHoneypot;
         normalized.isFirstDeposit = offChainReport.economic.isFirstDeposit;
         normalized.isFeeOnTransfer = false;
-        normalized.anyOracleStale = offChainReport.economic.tokenAOracleStale || offChainReport.economic.tokenBOracleStale;
+        normalized.anyOracleStale =
+            offChainReport.economic.tokenAOracleStale || offChainReport.economic.tokenBOracleStale;
         normalized.anyContractUnverified =
-            !(offChainReport.routerVerified && offChainReport.pairVerified && offChainReport.tokenAVerified && offChainReport.tokenBVerified);
+        !(offChainReport.routerVerified && offChainReport.pairVerified && offChainReport.tokenAVerified
+                && offChainReport.tokenBVerified);
         normalized.oracleDeviation = offChainReport.economic.ratioDeviationBps > 500;
         normalized.simulationReverted = offChainReport.economic.simulationReverted;
         normalized.priceImpactBps = 0;
         normalized.outputDiscrepancyBps = _capUint16(offChainReport.economic.lpMintDiscrepancyBps);
         normalized.ratioDeviationBps = _capUint16(offChainReport.economic.ratioDeviationBps);
+    }
+
+    /**
+     * @dev Extracts all rich numeric fields from LiquidityOffChainResult.
+     */
+    function _extractLiquidityEconomic(LiquidityOffChainResult memory offChainReport)
+        internal
+        pure
+        returns (ExtendedEconomicData memory economicData)
+    {
+        economicData.lpMintDiscrepancyBps = offChainReport.economic.lpMintDiscrepancyBps;
+        economicData.ratioDeviationBps = offChainReport.economic.ratioDeviationBps;
+        economicData.tokenAOracleAge = offChainReport.economic.tokenAOracleAge;
+        economicData.tokenBOracleAge = offChainReport.economic.tokenBOracleAge;
+        economicData.removalSimAmountA = offChainReport.economic.removalSimAmountA;
+        economicData.removalSimAmountB = offChainReport.economic.removalSimAmountB;
+        economicData.simulationReverted = offChainReport.economic.simulationReverted;
+        economicData.isRemovalFrozen = offChainReport.economic.isRemovalFrozen;
+
+        // Stealth removal honeypot
+        bool stealthHoneypot = !offChainReport.economic.isRemovalFrozen
+            && offChainReport.economic.removalSimAmountA == 0 && offChainReport.economic.removalSimAmountB == 0
+            && offChainReport.simulatedAt != 0;
+        if (stealthHoneypot) economicData.isRemovalFrozen = true;
+
+        // USD value of excess lost (combined A + B).
+        economicData.excessValueLostUSD = offChainReport.economic.excessValueLostUSD;
+        if (
+            economicData.excessValueLostUSD == 0
+                && (offChainReport.economic.excessTokenALost > 0 || offChainReport.economic.excessTokenBLost > 0)
+        ) {
+            uint256 lostA = offChainReport.economic.tokenAPriceUSD > 0
+                ? (offChainReport.economic.excessTokenALost * offChainReport.economic.tokenAPriceUSD) / 1e18
+                : 0;
+            uint256 lostB = offChainReport.economic.tokenBPriceUSD > 0
+                ? (offChainReport.economic.excessTokenBLost * offChainReport.economic.tokenBPriceUSD) / 1e18
+                : 0;
+            economicData.excessValueLostUSD = lostA + lostB;
+        }
+
+        // Owner sweep value
+        economicData.sweepDetected = offChainReport.trace.hasOwnerSweep;
+        if (economicData.sweepDetected && offChainReport.trace.sweepAmount > 0) {
+            // Use tokenA price as approximation (sweep token may be either token)
+            uint256 priceUSD = offChainReport.economic.tokenAPriceUSD > 0
+                ? offChainReport.economic.tokenAPriceUSD
+                : offChainReport.economic.tokenBPriceUSD;
+            economicData.sweepAmountUSD = priceUSD > 0 ? (offChainReport.trace.sweepAmount * priceUSD) / 1e18 : 0;
+        }
     }
 }

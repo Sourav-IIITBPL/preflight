@@ -1,3 +1,13 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+enum LiquidityOperationType {
+    ADD,
+    ADD_ETH,
+    REMOVE,
+    REMOVE_ETH
+}
+
 struct VaultGuardResult {
     bool VAULT_NOT_WHITELISTED;
     bool VAULT_ZERO_SUPPLY;
@@ -86,9 +96,7 @@ struct TokenGuardResult {
     bool HAS_FLASH_MINT;
 }
 
-
 // Combined report structs and enums
-
 
 enum PolicyRiskCategory {
     INFO,
@@ -101,6 +109,39 @@ enum PolicyKind {
     ERC4626,
     SWAP_V2,
     LIQUIDITY_V2
+}
+
+struct ExtendedEconomicData {
+    // Vault-specific
+    uint256 outputDiscrepancyBps;
+    uint256 sharePriceDriftBps;
+    uint256 excessPullBps;
+    uint256 assetOracleAge;
+    uint256 exitSimulatedOut;
+    uint256 sweepAmountUSD;
+    // Swap-specific
+    uint256 priceImpactBps;
+    uint256 measuredFeePercent;
+    uint256 inputHeadroomBps;
+    uint256 tokenInOracleAge;
+    uint256 tokenOutOracleAge;
+    uint256 oracleFairAmountOut;
+    uint256 actualAmountOut;
+    //Liquidity-specific
+    uint256 lpMintDiscrepancyBps;
+    uint256 ratioDeviationBps;
+    uint256 excessValueLostUSD;
+    uint256 tokenAOracleAge;
+    uint256 tokenBOracleAge;
+    uint256 removalSimAmountA;
+    uint256 removalSimAmountB;
+    // Universal
+    bool simulationReverted;
+    bool isExitFrozen;
+    bool isRemovalFrozen;
+    bool sweepDetected;
+    bool upgradeCallDetected;
+    bool feeOnTransferConfirmed;
 }
 
 struct PolicyNormalizedOffChainResult {

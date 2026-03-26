@@ -1,363 +1,1173 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
-import {CombinedRiskReport} from "../RiskPolicy.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import {PolicyKind, PolicyRiskCategory} from "./types/OnChainTypes.sol";
 
 /**
- * @title  SVGRenderer
- * @notice Generates a fully on-chain SVG for each PreFlight Risk Report NFT.
- *         The design is a 420×300 dark-mode card showing:
- *   • Risk level header + operation badge
- *   • Horizontal risk meter (green→yellow→red) with score indicator
- *   • On-chain flags section (critical flags highlighted)
- *   • Off-chain trace & economic findings section
- *   • Transaction details footer
- *   • Status badge
+ * @title SVGRenderer
+ * @notice Pure renderer/decoder for packed PreFlight policy reports.
+ *         It converts a single packed `uint256` into:
+ *         1. a user-friendly SVG
+ *         2. fully on-chain JSON metadata
+ *
+ *         The bit layout mirrors `BaseRiskPolicy`.
  */
 library SVGRenderer {
     using Strings for uint256;
-    using Strings for address;
 
-    // ── Palette ────────────────────────────────────────────────────────────────
-    string internal constant C_BG      = "#0d1117";
-    string internal constant C_SAFE    = "#3fb950";
-    string internal constant C_WARN    = "#d29922";
-    string internal constant C_CRIT    = "#f85149";
-    string internal constant C_INFO    = "#58a6ff";
-    string internal constant C_TEXT    = "#c9d1d9";
-    string internal constant C_MUTED   = "#8b949e";
-    string internal constant C_BORDER  = "#30363d";
-    string internal constant C_SURFACE = "#161b22";
-    string internal constant C_PENDING = "#58a6ff";
-    string internal constant C_CONSUMED= "#3fb950";
-    string internal constant C_EXPIRED = "#6e7681";
-
-    // Report-type labels (must match RiskReportNFT.ReportType enum order)
-    function _typeLabel(uint8 rt) internal pure returns (string memory) {
-        if (rt == 0) return "VAULT DEPOSIT";
-        if (rt == 1) return "VAULT REDEEM";
-        if (rt == 2) return "VAULT MINT";
-        if (rt == 3) return "VAULT WITHDRAW";
-        if (rt == 4) return "SWAP V2";
-        if (rt == 5) return "SWAP V3";
-        if (rt == 6) return "SWAP V4";
-        if (rt == 7) return "ADD LIQUIDITY";
-        if (rt == 8) return "ADD LIQ ETH";
-        if (rt == 9) return "REMOVE LIQ";
-        return "REMOVE LIQ ETH";
+    struct RenderContext {
+        uint256 packedReport;
+        address owner;
+        address sourceMinter;
+        uint64 mintedAt;
+        uint64 mintedBlock;
     }
 
-    function _riskColor(uint8 level) internal pure returns (string memory) {
-        if (level == 0) return C_SAFE;
-        if (level == 1) return C_WARN;
-        return C_CRIT;
+    struct DecodedReport {
+        PolicyKind kind;
+        uint8 operation;
+        uint8 version;
+        PolicyRiskCategory finalCategory;
+        PolicyRiskCategory offChainCategory;
+        uint8 compositeScore;
+        uint8 onChainScore;
+        uint8 offChainScore;
+        uint8 onChainCriticalCount;
+        uint8 onChainWarningCount;
+        uint8 offChainFindingCount;
+        bool anyHardBlock;
+        bool offChainValid;
+        uint32 onChainFlagsPacked;
+        uint32 offChainFlagsPacked;
+        uint32 tokenFlagsPacked;
+        uint16 priceImpactBps;
+        uint16 outputDiscrepancyBps;
+        uint16 ratioDeviationBps;
+        uint8 tokenCriticalCount;
+        uint8 tokenWarningCount;
+        bool tokenRiskEvaluated;
+        uint8 economicSeverityTier;
+        uint8 oracleAgeTier;
+        uint8 excessPullTier;
+        uint8 sharePriceDriftTier;
+        uint8 compoundRiskCount;
+        bool simulationRevertBlock;
+        uint8 sweepSeverityTier;
+        bool enhancedPresent;
     }
 
-    function _riskLabel(uint8 level) internal pure returns (string memory) {
-        if (level == 0) return "SAFE";
-        if (level == 1) return "WARNING";
-        return "CRITICAL";
+    string internal constant C_BG = "#07111f";
+    string internal constant C_PANEL = "#0d1b2a";
+    string internal constant C_PANEL_ALT = "#102338";
+    string internal constant C_TEXT = "#e8eef6";
+    string internal constant C_MUTED = "#8aa0b8";
+    string internal constant C_BORDER = "#1d3853";
+    string internal constant C_INFO = "#3fb950";
+    string internal constant C_WARN = "#f4b942";
+    string internal constant C_MED = "#f97316";
+    string internal constant C_CRIT = "#ef4444";
+    string internal constant C_ACCENT = "#38bdf8";
+    string internal constant C_TOKEN = "#c084fc";
+    string internal constant C_SOFT = "#1f4b7a";
+
+    uint8 internal constant SHIFT_ONCHAIN_FLAGS = 0;
+    uint8 internal constant SHIFT_OFFCHAIN_FLAGS = 32;
+    uint8 internal constant SHIFT_COMPOSITE_SCORE = 64;
+    uint8 internal constant SHIFT_ONCHAIN_SCORE = 72;
+    uint8 internal constant SHIFT_OFFCHAIN_SCORE = 80;
+    uint8 internal constant SHIFT_FINAL_CATEGORY = 88;
+    uint8 internal constant SHIFT_OFFCHAIN_CATEGORY = 90;
+    uint8 internal constant SHIFT_ANY_HARD_BLOCK = 92;
+    uint8 internal constant SHIFT_OFFCHAIN_VALID = 93;
+    uint8 internal constant SHIFT_ONCHAIN_CRITICAL = 94;
+    uint8 internal constant SHIFT_ONCHAIN_WARNING = 100;
+    uint8 internal constant SHIFT_OFFCHAIN_FINDINGS = 106;
+    uint8 internal constant SHIFT_PRICE_IMPACT = 112;
+    uint8 internal constant SHIFT_OUTPUT_DISCREPANCY = 128;
+    uint8 internal constant SHIFT_RATIO_DEVIATION = 144;
+    uint8 internal constant SHIFT_OPERATION = 160;
+    uint8 internal constant SHIFT_POLICY_KIND = 164;
+    uint8 internal constant SHIFT_POLICY_VERSION = 166;
+    uint8 internal constant SHIFT_TOKEN_FLAGS = 174;
+    uint8 internal constant SHIFT_TOKEN_CRITICAL = 206;
+    uint8 internal constant SHIFT_TOKEN_WARNING = 212;
+    uint8 internal constant SHIFT_TOKEN_EVALUATED = 218;
+    uint8 internal constant SHIFT_ECONOMIC_TIER = 219;
+    uint8 internal constant SHIFT_ORACLE_AGE_TIER = 222;
+    uint8 internal constant SHIFT_EXCESS_PULL_TIER = 225;
+    uint8 internal constant SHIFT_SHARE_DRIFT_TIER = 228;
+    uint8 internal constant SHIFT_COMPOUND_COUNT = 231;
+    uint8 internal constant SHIFT_SIM_REVERT_BLOCK = 234;
+    uint8 internal constant SHIFT_SWEEP_TIER = 235;
+    uint8 internal constant SHIFT_ENHANCED_PRESENT = 238;
+
+    uint8 internal constant OFFCHAIN_VALID = 0;
+
+    function buildTokenURI(uint256 tokenId, RenderContext memory context) internal pure returns (string memory) {
+        DecodedReport memory report = _decode(context.packedReport);
+        string memory svg = _renderSVG(tokenId, context, report);
+        string memory json = Base64.encode(
+            bytes(
+                string(
+                    abi.encodePacked(
+                        '{"name":"',
+                        _name(tokenId, report),
+                        '","description":"',
+                        _description(report),
+                        '","image":"data:image/svg+xml;base64,',
+                        Base64.encode(bytes(svg)),
+                        '","attributes":[',
+                        _attributes(context, report),
+                        "]}"
+                    )
+                )
+            )
+        );
+
+        return string(abi.encodePacked("data:application/json;base64,", json));
     }
 
-    function _statusColor(uint8 status) internal pure returns (string memory) {
-        if (status == 0) return C_PENDING;
-        if (status == 1) return C_CONSUMED;
-        return C_EXPIRED;
+    function _renderSVG(uint256 tokenId, RenderContext memory context, DecodedReport memory report)
+        internal
+        pure
+        returns (string memory)
+    {
+        string memory categoryColor = _categoryColor(report.finalCategory);
+
+        return string(
+            abi.encodePacked(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1280" width="1000" height="1280">',
+                _defs(),
+                '<rect width="1000" height="1280" rx="28" fill="url(#bg)"/>',
+                '<rect x="14" y="14" width="972" height="1252" rx="24" fill="none" stroke="',
+                categoryColor,
+                '" stroke-opacity="0.48" stroke-width="2"/>',
+                '<rect x="26" y="26" width="948" height="210" rx="24" fill="url(#hero)"/>',
+                _hero(tokenId, context, report),
+                _meters(report, categoryColor),
+                _onChainPanel(report),
+                _offChainPanel(report),
+                _tokenPanel(report),
+                _footer(context, report),
+                "</svg>"
+            )
+        );
     }
 
-    function _statusLabel(uint8 status) internal pure returns (string memory) {
-        if (status == 0) return "PENDING";
-        if (status == 1) return "CONSUMED";
-        return "EXPIRED";
+    function _defs() internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                "<defs>",
+                '<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">',
+                '<stop offset="0%" stop-color="#04101d"/>',
+                '<stop offset="100%" stop-color="#071726"/>',
+                "</linearGradient>",
+                '<linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">',
+                '<stop offset="0%" stop-color="#0d2033"/>',
+                '<stop offset="50%" stop-color="#10263d"/>',
+                '<stop offset="100%" stop-color="#0b1828"/>',
+                "</linearGradient>",
+                '<linearGradient id="meter" x1="0" y1="0" x2="1" y2="0">',
+                '<stop offset="0%" stop-color="#3fb950"/>',
+                '<stop offset="35%" stop-color="#f4b942"/>',
+                '<stop offset="65%" stop-color="#f97316"/>',
+                '<stop offset="100%" stop-color="#ef4444"/>',
+                "</linearGradient>",
+                '<filter id="softGlow"><feGaussianBlur stdDeviation="7" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
+                "</defs>"
+            )
+        );
     }
 
-    // ── Main render function ───────────────────────────────────────────────────
+    function _hero(uint256 tokenId, RenderContext memory context, DecodedReport memory report)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(abi.encodePacked(_heroTop(tokenId, report), _heroBottom(context)));
+    }
 
-    function render(
-        uint256 tokenId,
-        CombinedRiskReport memory r,
-        uint8 status
+    function _heroTop(uint256 tokenId, DecodedReport memory report) internal pure returns (string memory) {
+        return string(abi.encodePacked(_heroTitle(), _heroBadges(tokenId, report)));
+    }
+
+    function _heroTitle() internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '<text x="64" y="72" font-family="Georgia, serif" font-size="36" font-weight="700" fill="',
+                C_TEXT,
+                '">PreFlight Risk Report</text>',
+                '<text x="64" y="103" font-family="Verdana, sans-serif" font-size="16" fill="',
+                C_MUTED,
+                '">Fully on-chain decoded audit NFT for guarded execution</text>'
+            )
+        );
+    }
+
+    function _heroBadges(uint256 tokenId, DecodedReport memory report) internal pure returns (string memory) {
+        string memory categoryColor = _categoryColor(report.finalCategory);
+        string memory hardBlockLabel = report.anyHardBlock ? "HARD BLOCK" : "NO HARD BLOCK";
+        string memory hardBlockColor = report.anyHardBlock ? C_CRIT : C_INFO;
+
+        return string(
+            abi.encodePacked(
+                _badge(64, 132, 138, 34, categoryColor, _categoryLabel(report.finalCategory)),
+                _badge(214, 132, 230, 34, C_ACCENT, _operationLabel(report.kind, report.operation)),
+                _badge(456, 132, 152, 34, hardBlockColor, hardBlockLabel),
+                _badge(756, 52, 174, 32, C_SOFT, string(abi.encodePacked("TOKEN #", tokenId.toString()))),
+                _badge(756, 96, 174, 32, categoryColor, _policyKindLabel(report.kind))
+            )
+        );
+    }
+
+    function _heroBottom(RenderContext memory context) internal pure returns (string memory) {
+        string memory ownerText = _shortAddress(context.owner);
+        string memory minterText = _shortAddress(context.sourceMinter);
+
+        return string(
+            abi.encodePacked(
+                '<text x="64" y="192" font-family="Verdana, sans-serif" font-size="14" fill="',
+                C_MUTED,
+                '">Owner</text>',
+                '<text x="64" y="214" font-family="monospace" font-size="18" fill="',
+                C_TEXT,
+                '">',
+                ownerText,
+                "</text>",
+                '<text x="344" y="192" font-family="Verdana, sans-serif" font-size="14" fill="',
+                C_MUTED,
+                '">Minter</text>',
+                '<text x="344" y="214" font-family="monospace" font-size="18" fill="',
+                C_TEXT,
+                '">',
+                minterText,
+                "</text>",
+                '<text x="628" y="192" font-family="Verdana, sans-serif" font-size="14" fill="',
+                C_MUTED,
+                '">Minted</text>',
+                '<text x="628" y="214" font-family="monospace" font-size="18" fill="',
+                C_TEXT,
+                '">block ',
+                uint256(context.mintedBlock).toString(),
+                " / ts ",
+                uint256(context.mintedAt).toString(),
+                "</text>"
+            )
+        );
+    }
+
+    function _onChainPanel(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _sectionFrame(44, 316, 912, 220, "ON-CHAIN FINDINGS", C_ACCENT, _onChainSubtitle(report)),
+                _renderOnChainChips(report, 316)
+            )
+        );
+    }
+
+    function _offChainPanel(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _sectionFrame(44, 566, 912, 292, "OFF-CHAIN FINDINGS", C_MED, _offChainSubtitle(report)),
+                _renderOffChainChips(report, 566)
+            )
+        );
+    }
+
+    function _tokenPanel(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _sectionFrame(44, 888, 912, 252, "TOKEN RISK", C_TOKEN, _tokenSubtitle(report)),
+                _renderTokenChips(report, 888)
+            )
+        );
+    }
+
+    function _meters(DecodedReport memory report, string memory categoryColor) internal pure returns (string memory) {
+        uint256 markerX = 72 + (uint256(report.compositeScore) * 830) / 100;
+
+        return string(
+            abi.encodePacked(
+                _metricCard(44, 252, 210, 86, "Composite", report.compositeScore, categoryColor),
+                _metricCard(274, 252, 210, 86, "On-Chain", report.onChainScore, C_ACCENT),
+                _metricCard(504, 252, 210, 86, "Off-Chain", report.offChainScore, C_MED),
+                _metricTextCard(734, 252, 222, 86, "Findings", _findingSummary(report)),
+                '<rect x="58" y="360" width="854" height="18" rx="9" fill="#11263a"/>',
+                '<rect x="58" y="360" width="854" height="18" rx="9" fill="url(#meter)"/>',
+                '<circle cx="',
+                markerX.toString(),
+                '" cy="369" r="12" fill="#06111d" stroke="',
+                categoryColor,
+                '" stroke-width="3" filter="url(#softGlow)"/>',
+                '<circle cx="',
+                markerX.toString(),
+                '" cy="369" r="5" fill="',
+                categoryColor,
+                '"/>',
+                '<text x="58" y="398" font-family="Verdana, sans-serif" font-size="13" fill="#3fb950">INFO</text>',
+                '<text x="310" y="398" font-family="Verdana, sans-serif" font-size="13" fill="#f4b942">WARNING</text>',
+                '<text x="548" y="398" font-family="Verdana, sans-serif" font-size="13" fill="#f97316">MEDIUM</text>',
+                '<text x="815" y="398" font-family="Verdana, sans-serif" font-size="13" fill="#ef4444">CRITICAL</text>'
+            )
+        );
+    }
+
+    function _findingSummary(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                uint256(_countSetBits32(report.onChainFlagsPacked)).toString(),
+                " on / ",
+                uint256(_countSetBits32(_clearBit(report.offChainFlagsPacked, OFFCHAIN_VALID))).toString(),
+                " off / ",
+                uint256(_countSetBits32(report.tokenFlagsPacked)).toString(),
+                " token"
+            )
+        );
+    }
+
+    function _metricCard(
+        uint256 x,
+        uint256 y,
+        uint256 w,
+        uint256 h,
+        string memory title,
+        uint256 value,
+        string memory color
     ) internal pure returns (string memory) {
-        string memory riskColor  = _riskColor(r.finalRiskLevel);
-        string memory riskLabel  = _riskLabel(r.finalRiskLevel);
-        string memory statusColor= _statusColor(status);
-        string memory statusLabel= _statusLabel(status);
-        string memory typeLabel  = _typeLabel(r.reportType);
+        return string(abi.encodePacked(_metricCardFrame(x, y, w, h), _metricCardContent(x, y, title, value, color)));
+    }
 
-        return string.concat(
-            _header(tokenId, riskColor, riskLabel, typeLabel),
-            _riskMeter(r.finalRiskScore, r.finalRiskLevel),
-            _onChainSection(r),
-            _offChainSection(r),
-            _footer(r, tokenId, statusColor, statusLabel),
-            "</svg>"
+    function _metricTextCard(uint256 x, uint256 y, uint256 w, uint256 h, string memory title, string memory value)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(abi.encodePacked(_metricCardFrame(x, y, w, h), _metricTextCardContent(x, y, title, value)));
+    }
+
+    function _metricCardFrame(uint256 x, uint256 y, uint256 w, uint256 h) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '<rect x="',
+                x.toString(),
+                '" y="',
+                y.toString(),
+                '" width="',
+                w.toString(),
+                '" height="',
+                h.toString(),
+                '" rx="20" fill="',
+                C_PANEL,
+                '" stroke="',
+                C_BORDER,
+                '"/>'
+            )
         );
     }
 
-    function _header(
-        uint256 tokenId,
-        string memory riskColor,
-        string memory riskLabel,
-        string memory typeLabel
+    function _metricCardContent(uint256 x, uint256 y, string memory title, uint256 value, string memory color)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                '<text x="',
+                (x + 20).toString(),
+                '" y="',
+                (y + 28).toString(),
+                '" font-family="Verdana, sans-serif" font-size="13" fill="',
+                C_MUTED,
+                '">',
+                title,
+                "</text>",
+                '<text x="',
+                (x + 20).toString(),
+                '" y="',
+                (y + 63).toString(),
+                '" font-family="Georgia, serif" font-size="34" font-weight="700" fill="',
+                color,
+                '">',
+                value.toString(),
+                '<tspan font-size="18" fill="',
+                C_MUTED,
+                '">/100</tspan></text>'
+            )
+        );
+    }
+
+    function _metricTextCardContent(uint256 x, uint256 y, string memory title, string memory value)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                '<text x="',
+                (x + 20).toString(),
+                '" y="',
+                (y + 28).toString(),
+                '" font-family="Verdana, sans-serif" font-size="13" fill="',
+                C_MUTED,
+                '">',
+                title,
+                "</text>",
+                '<text x="',
+                (x + 20).toString(),
+                '" y="',
+                (y + 60).toString(),
+                '" font-family="Verdana, sans-serif" font-size="18" fill="',
+                C_TEXT,
+                '">',
+                value,
+                "</text>"
+            )
+        );
+    }
+
+    function _sectionFrame(
+        uint256 x,
+        uint256 y,
+        uint256 w,
+        uint256 h,
+        string memory title,
+        string memory accent,
+        string memory subtitle
     ) internal pure returns (string memory) {
-        return string.concat(
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 300" width="420" height="300">',
-            '<defs>',
-            '<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">',
-            '<stop offset="0%" stop-color="', C_BG, '"/>',
-            '<stop offset="100%" stop-color="', C_SURFACE, '"/>',
-            '</linearGradient>',
-            '<linearGradient id="meter" x1="0" y1="0" x2="1" y2="0">',
-            '<stop offset="0%" stop-color="', C_SAFE, '"/>',
-            '<stop offset="45%" stop-color="', C_WARN, '"/>',
-            '<stop offset="100%" stop-color="', C_CRIT, '"/>',
-            '</linearGradient>',
-            '</defs>',
-            // Card background
-            '<rect width="420" height="300" rx="14" fill="url(#bg)"/>',
-            '<rect width="420" height="300" rx="14" fill="none" stroke="', riskColor, '" stroke-width="1.5" stroke-opacity="0.45"/>',
-            // Top accent bar (risk colour gradient)
-            '<rect x="0" y="0" width="420" height="5" rx="2" fill="', riskColor, '" opacity="0.9"/>',
-            // Shield icon
-            '<path d="M18 15 L26 12 L34 15 L34 23 C34 28 26 32 26 32 C26 32 18 28 18 23 Z" fill="', riskColor, '" fill-opacity="0.2" stroke="', riskColor, '" stroke-width="1.2"/>',
-            // "PREFLIGHT" branding
-            '<text x="40" y="30" font-family="monospace" font-size="13" font-weight="bold" fill="', C_TEXT, '">PREFLIGHT</text>',
-            '<text x="40" y="44" font-family="monospace" font-size="9" fill="', C_MUTED, '">RISK REPORT NFT</text>',
-            // Token ID
-            '<text x="408" y="30" font-family="monospace" font-size="10" fill="', C_MUTED, '" text-anchor="end">#', tokenId.toString(), '</text>',
-            // Operation type badge
-            '<rect x="295" y="13" width="110" height="20" rx="10" fill="', riskColor, '" fill-opacity="0.12" stroke="', riskColor, '" stroke-width="1"/>',
-            '<text x="350" y="27" font-family="monospace" font-size="8" fill="', riskColor, '" text-anchor="middle">', typeLabel, '</text>',
-            // Divider
-            '<line x1="16" y1="56" x2="404" y2="56" stroke="', C_BORDER, '" stroke-width="1"/>',
-            // Risk level text
-            '<text x="16" y="76" font-family="monospace" font-size="10" fill="', C_MUTED, '">RISK LEVEL</text>',
-            '<text x="16" y="94" font-family="monospace" font-size="20" font-weight="bold" fill="', riskColor, '">', riskLabel, '</text>'
+        return string(abi.encodePacked(_sectionFrameBox(x, y, w, h, accent), _sectionFrameText(x, y, title, subtitle)));
+    }
+
+    function _sectionFrameBox(uint256 x, uint256 y, uint256 w, uint256 h, string memory accent)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                '<rect x="',
+                x.toString(),
+                '" y="',
+                y.toString(),
+                '" width="',
+                w.toString(),
+                '" height="',
+                h.toString(),
+                '" rx="24" fill="',
+                C_PANEL_ALT,
+                '" stroke="',
+                C_BORDER,
+                '"/>',
+                '<rect x="',
+                x.toString(),
+                '" y="',
+                y.toString(),
+                '" width="',
+                w.toString(),
+                '" height="12" rx="24" fill="',
+                accent,
+                '" fill-opacity="0.22"/>'
+            )
         );
     }
 
-    function _riskMeter(uint8 score, uint8 level) internal pure returns (string memory) {
-        // Score indicator position: x = 16 + (score/100)*388
-        uint256 indicatorX = 16 + (uint256(score) * 388) / 100;
-        string memory indXStr = indicatorX.toString();
-        string memory scoreStr = uint256(score).toString();
-
-        // Zone labels on the meter
-        return string.concat(
-            // Meter track
-            '<rect x="16" y="102" width="388" height="10" rx="5" fill="url(#meter)" opacity="0.85"/>',
-            // Dark overlay for unused portion (none — full gradient shown)
-            // Indicator circle
-            '<circle cx="', indXStr, '" cy="107" r="8" fill="', C_BG, '" stroke="white" stroke-width="2"/>',
-            '<circle cx="', indXStr, '" cy="107" r="4" fill="white"/>',
-            // Score label
-            '<text x="', indXStr, '" y="128" font-family="monospace" font-size="8" fill="white" text-anchor="middle">', scoreStr, '/100</text>',
-            // Zone captions
-            '<text x="16"  y="139" font-family="monospace" font-size="7" fill="', C_SAFE, '">SAFE</text>',
-            '<text x="175" y="139" font-family="monospace" font-size="7" fill="', C_WARN, '" text-anchor="middle">WARNING</text>',
-            '<text x="404" y="139" font-family="monospace" font-size="7" fill="', C_CRIT, '" text-anchor="end">CRITICAL</text>',
-            // Divider
-            '<line x1="16" y1="145" x2="404" y2="145" stroke="', C_BORDER, '" stroke-width="1"/>'
+    function _sectionFrameText(uint256 x, uint256 y, string memory title, string memory subtitle)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                '<text x="',
+                (x + 24).toString(),
+                '" y="',
+                (y + 42).toString(),
+                '" font-family="Georgia, serif" font-size="28" font-weight="700" fill="',
+                C_TEXT,
+                '">',
+                title,
+                "</text>",
+                '<text x="',
+                (x + 24).toString(),
+                '" y="',
+                (y + 68).toString(),
+                '" font-family="Verdana, sans-serif" font-size="14" fill="',
+                C_MUTED,
+                '">',
+                subtitle,
+                "</text>"
+            )
         );
     }
 
-    function _onChainSection(CombinedRiskReport memory r) internal pure returns (string memory) {
-        // Build flag list from packed bits (vault = 14 flags, swap = 13, liq = 12)
-        string memory flagLines = _buildOnChainFlags(r);
-
-        return string.concat(
-            // Section header
-            '<text x="16" y="160" font-family="monospace" font-size="9" font-weight="bold" fill="', C_INFO, '">ON-CHAIN</text>',
-            '<text x="16" y="172" font-family="monospace" font-size="7.5" fill="', C_MUTED, '">',
-            uint256(r.onChainCriticalCount).toString(), ' critical  ',
-            uint256(r.onChainSoftCount).toString(), ' warnings  ',
-            _cleanCount(r.onChainTotalFlags, r.onChainCriticalCount, r.onChainSoftCount), ' clean',
-            '</text>',
-            flagLines,
-            // Vertical divider between on-chain and off-chain sections
-            '<line x1="214" y1="148" x2="214" y2="240" stroke="', C_BORDER, '" stroke-width="1"/>'
-        );
+    function _renderOnChainChips(DecodedReport memory report, uint256 baseY) internal pure returns (string memory) {
+        return _renderFlagSection(report.kind, report.operation, report.onChainFlagsPacked, 0, baseY + 94);
     }
 
-    function _buildOnChainFlags(CombinedRiskReport memory r) internal pure returns (string memory) {
-        // We show up to 4 triggered on-chain flags (names depend on report type)
-        bool isSwap = (r.reportType >= 4 && r.reportType <= 6);
-        bool isLiq  = (r.reportType >= 7);
+    function _renderOffChainChips(DecodedReport memory report, uint256 baseY) internal pure returns (string memory) {
+        return _renderFlagSection(report.kind, report.operation, report.offChainFlagsPacked, 1, baseY + 94);
+    }
 
-        string[14] memory vaultNames = [
-            "VAULT_NOT_LISTED", "ZERO_SUPPLY",    "DONATION_ATTACK",   "SHARE_INFLATE",
-            "BAL_MISMATCH",     "RATE_ANOMALY",   "PREVIEW_REVERT",    "ZERO_SHARES",
-            "ZERO_ASSETS",      "DUST_SHARES",    "DUST_ASSETS",       "EXCEEDS_DEPOSIT",
-            "EXCEEDS_REDEEM",   "PREVIEW_MISMATCH"
-        ];
-        string[13] memory swapNames = [
-            "NOT_TRUSTED",      "FACTORY_MISMATCH","DEEP_MULTIHOP",    "DUPE_TOKEN",
-            "NO_POOL",          "ZERO_LIQUIDITY",  "LOW_LIQUIDITY",    "LOW_LP",
-            "POOL_TOO_NEW",     "SEVERE_IMBALANCE","K_BROKEN",         "HIGH_IMPACT",
-            "PRICE_MANIP"
-        ];
-        string[12] memory liqNames  = [
-            "NOT_TRUSTED",      "PAIR_NOT_EXISTS","ZERO_LIQUIDITY",   "LOW_LIQUIDITY",
-            "LOW_LP",           "FIRST_DEPOSITOR","SEVERE_IMBALANCE", "K_BROKEN",
-            "RATIO_DEVIATION",  "HIGH_LP_IMPACT", "FLASHLOAN_RISK",   "TOKEN_RISK"
-        ];
+    function _renderTokenChips(DecodedReport memory report, uint256 baseY) internal pure returns (string memory) {
+        if (!report.tokenRiskEvaluated) {
+            return _emptyChip("Token analysis unavailable", baseY + 106, C_MUTED);
+        }
+        return _renderFlagSection(report.kind, report.operation, report.tokenFlagsPacked, 2, baseY + 94);
+    }
 
-        uint8 count = isSwap ? 13 : (isLiq ? 12 : 14);
-        string memory out;
+    function _renderFlagSection(PolicyKind kind, uint8 operation, uint32 packed, uint8 section, uint256 startY)
+        internal
+        pure
+        returns (string memory out)
+    {
+        uint256 x = 68;
+        uint256 y = startY;
         uint8 shown;
-        uint8 row;
+        uint8 maxBits = section == 0 ? _onChainFlagCount(kind) : (section == 1 ? 27 : 28);
 
-        for (uint8 i = 0; i < count && shown < 6;) {
-            bool flagSet = (r.onChainFlagsPacked >> i) & 1 == 1;
-            if (flagSet) {
-                string memory name = isSwap
-                    ? swapNames[i]
-                    : (isLiq ? liqNames[i] : vaultNames[i]);
-                string memory dotColor = i < 7 ? C_CRIT : C_WARN; // first half = critical risk flags
-                uint256 yPos = 188 + uint256(row) * 14;
-                out = string.concat(out,
-                    '<circle cx="22" cy="', yPos.toString(), '" r="3" fill="', dotColor, '"/>',
-                    '<text x="29" y="', (yPos + 4).toString(), '" font-family="monospace" font-size="7.5" fill="', C_TEXT, '">',
-                    name, '</text>'
-                );
-                shown++;
-                row++;
+        for (uint8 i = 0; i < maxBits;) {
+            if (_isSet(packed, i)) {
+                if (section == 1 && i == OFFCHAIN_VALID) {
+                    unchecked {
+                        ++i;
+                    }
+                    continue;
+                }
+
+                string memory label = section == 0
+                    ? _onChainLabel(kind, operation, i)
+                    : (section == 1 ? _offChainLabel(i) : _tokenLabel(i));
+
+                if (bytes(label).length > 0) {
+                    bool critical = section == 0
+                        ? _isOnChainCritical(kind, operation, i)
+                        : (section == 1 ? _isOffChainCritical(i) : _isTokenCritical(i));
+
+                    string memory chipColor = critical ? C_CRIT : (section == 2 ? C_TOKEN : C_WARN);
+                    uint256 width = _chipWidth(label);
+
+                    if (x + width > 900) {
+                        x = 68;
+                        y += 30;
+                    }
+
+                    out = string(abi.encodePacked(out, _chip(x, y, width, chipColor, label, critical ? "C" : "W")));
+                    x += width + 10;
+                    shown++;
+                }
             }
-            unchecked { ++i; }
+
+            unchecked {
+                ++i;
+            }
         }
 
         if (shown == 0) {
-            out = string.concat(
-                '<circle cx="22" cy="192" r="3" fill="', C_SAFE, '"/>',
-                '<text x="29" y="196" font-family="monospace" font-size="7.5" fill="', C_SAFE, '">ALL CLEAR</text>'
-            );
+            out = _emptyChip("No triggered findings", startY + 12, C_INFO);
         }
-
-        return out;
     }
 
-    function _offChainSection(CombinedRiskReport memory r) internal pure returns (string memory) {
-        string memory lines = _buildOffChainLines(r);
-
-        string memory score = uint256(r.offChainRiskScore).toString();
-        string memory lvlColor = _riskColor(r.offChainRiskLevel);
-
-        return string.concat(
-            '<text x="222" y="160" font-family="monospace" font-size="9" font-weight="bold" fill="', C_INFO, '">OFF-CHAIN</text>',
-            '<text x="222" y="172" font-family="monospace" font-size="7.5" fill="', lvlColor, '">',
-            _riskLabel(r.offChainRiskLevel), '  score:', score, '</text>',
-            lines
-        );
-    }
-
-    function _buildOffChainLines(CombinedRiskReport memory r) internal pure returns (string memory) {
-        string memory out;
-        uint8 row;
-
-        // Absolute-block trace findings (always show if triggered)
-        if (r.hasDangerousDelegateCall) { out = _offLine(out, row, "DELEGATECALL!", C_CRIT); row++; }
-        if (r.hasSelfDestruct)          { out = _offLine(out, row, "SELFDESTRUCT!", C_CRIT); row++; }
-        if (r.hasOwnerSweep)            { out = _offLine(out, row, "OWNER SWEEP!",  C_CRIT); row++; }
-        if (r.hasApprovalDrain)         { out = _offLine(out, row, "APPROVAL DRAIN",C_CRIT); row++; }
-        if (r.isExitFrozen)             { out = _offLine(out, row, "EXIT FROZEN!",  C_CRIT); row++; }
-        if (r.isRemovalFrozen)          { out = _offLine(out, row, "LP FROZEN!",    C_CRIT); row++; }
-        if (row >= 6) return out;
-
-        // Warning-level findings
-        if (r.hasReentrancy)            { out = _offLine(out, row, "REENTRANCY",    C_WARN); row++; }
-        if (r.hasUpgradeCall)           { out = _offLine(out, row, "UPGRADE CALL",  C_WARN); row++; }
-        if (r.oracleDeviation)          { out = _offLine(out, row, "ORACLE DEVIATION",C_WARN); row++; }
-        if (r.isFeeOnTransfer)          { out = _offLine(out, row, "FEE-ON-TRANSFER",C_WARN); row++; }
-        if (r.isFirstDeposit)           { out = _offLine(out, row, "FIRST DEPOSITOR",C_WARN); row++; }
-        if (r.oracleStale)              { out = _offLine(out, row, "ORACLE STALE",  C_WARN); row++; }
-        if (row >= 6) return out;
-
-        if (r.offChainSimReverted) { out = _offLine(out, row, "SIM REVERTED",  C_CRIT); row++; }
-        if (!r.contractVerified)   { out = _offLine(out, row, "NOT VERIFIED",  C_WARN); row++; }
-
-        if (row == 0) {
-            out = _offLine(out, 0, "ALL CLEAN", C_SAFE);
-        }
-
-        return out;
-    }
-
-    function _offLine(string memory acc, uint8 row, string memory label, string memory color)
-        internal pure returns (string memory)
+    function _chip(uint256 x, uint256 y, uint256 width, string memory color, string memory label, string memory tier)
+        internal
+        pure
+        returns (string memory)
     {
-        uint256 yPos = 188 + uint256(row) * 14;
-        return string.concat(acc,
-            '<circle cx="220" cy="', yPos.toString(), '" r="3" fill="', color, '"/>',
-            '<text x="227" y="', (yPos + 4).toString(), '" font-family="monospace" font-size="7.5" fill="', C_TEXT, '">',
-            label, '</text>'
+        return string(abi.encodePacked(_chipFrame(x, y, width, color), _chipText(x, y, width, color, label, tier)));
+    }
+
+    function _chipFrame(uint256 x, uint256 y, uint256 width, string memory color)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                '<rect x="',
+                x.toString(),
+                '" y="',
+                y.toString(),
+                '" width="',
+                width.toString(),
+                '" height="22" rx="11" fill="',
+                color,
+                '" fill-opacity="0.11" stroke="',
+                color,
+                '" stroke-opacity="0.7"/>',
+                '<circle cx="',
+                (x + 14).toString(),
+                '" cy="',
+                (y + 11).toString(),
+                '" r="4" fill="',
+                color,
+                '"/>'
+            )
         );
     }
 
-    function _footer(
-        CombinedRiskReport memory r,
-        uint256 tokenId,
-        string memory statusColor,
-        string memory statusLabel
+    function _chipText(
+        uint256 x,
+        uint256 y,
+        uint256 width,
+        string memory color,
+        string memory label,
+        string memory tier
     ) internal pure returns (string memory) {
-        string memory verifiedBadge = r.contractVerified
-            ? string.concat('<text x="404" y="258" font-family="monospace" font-size="7" fill="', C_SAFE, '" text-anchor="end">✓ VERIFIED</text>')
-            : string.concat('<text x="404" y="258" font-family="monospace" font-size="7" fill="', C_WARN, '" text-anchor="end">⚠ UNVERIFIED</text>');
-
-        string memory impactStr = r.priceImpactBps > 0
-            ? string.concat("Impact:", uint256(r.priceImpactBps).toString(), "bps")
-            : (r.outputDiscrepancyBps > 0
-                ? string.concat("Slippage:", uint256(r.outputDiscrepancyBps).toString(), "bps")
-                : "");
-
-        return string.concat(
-            // Divider
-            '<line x1="16" y1="242" x2="404" y2="242" stroke="', C_BORDER, '" stroke-width="1"/>',
-            // Target
-            '<text x="16" y="255" font-family="monospace" font-size="8" fill="', C_MUTED, '">TARGET</text>',
-            '<text x="16" y="266" font-family="monospace" font-size="9" fill="', C_TEXT, '">', _shortAddr(r.target), '</text>',
-            // Amount
-            '<text x="130" y="255" font-family="monospace" font-size="8" fill="', C_MUTED, '">AMOUNT</text>',
-            '<text x="130" y="266" font-family="monospace" font-size="9" fill="', C_TEXT, '">', _shortNum(r.amount), '</text>',
-            // Block
-            '<text x="248" y="255" font-family="monospace" font-size="8" fill="', C_MUTED, '">BLOCK</text>',
-            '<text x="248" y="266" font-family="monospace" font-size="9" fill="', C_TEXT, '">', r.blockNumber.toString(), '</text>',
-            // Verified badge
-            verifiedBadge,
-            // Divider
-            '<line x1="16" y1="273" x2="404" y2="273" stroke="', C_BORDER, '" stroke-width="1"/>',
-            // Impact / discrepancy
-            '<text x="16" y="287" font-family="monospace" font-size="7.5" fill="', C_MUTED, '">', impactStr, '</text>',
-            // Status badge
-            '<rect x="308" y="278" width="96" height="18" rx="9" fill="', statusColor, '" fill-opacity="0.15" stroke="', statusColor, '" stroke-width="1"/>',
-            '<circle cx="323" cy="287" r="3.5" fill="', statusColor, '"/>',
-            '<text x="353" y="291" font-family="monospace" font-size="8.5" fill="', statusColor, '" text-anchor="middle">', statusLabel, '</text>'
+        return string(
+            abi.encodePacked(
+                '<text x="',
+                (x + 26).toString(),
+                '" y="',
+                (y + 15).toString(),
+                '" font-family="Verdana, sans-serif" font-size="11" fill="',
+                C_TEXT,
+                '">',
+                label,
+                "</text>",
+                '<text x="',
+                (x + width - 14).toString(),
+                '" y="',
+                (y + 15).toString(),
+                '" font-family="monospace" font-size="10" fill="',
+                color,
+                '" text-anchor="middle">',
+                tier,
+                "</text>"
+            )
         );
     }
 
-    // ── Pure helpers ───────────────────────────────────────────────────────────
-
-    function _cleanCount(uint8 total, uint8 crit, uint8 soft) internal pure returns (string memory) {
-        uint8 c = (total > crit + soft) ? total - crit - soft : 0;
-        return uint256(c).toString();
+    function _emptyChip(string memory label, uint256 y, string memory color) internal pure returns (string memory) {
+        return _chip(68, y, _chipWidth(label), color, label, "-");
     }
 
-    function _shortAddr(address addr) internal pure returns (string memory) {
-        string memory full = addr.toHexString();
-        bytes memory b    = bytes(full);
-        bytes memory out  = new bytes(13);
-        for (uint i = 0; i < 8; i++) out[i] = b[i];
-        out[8]  = "."; out[9]  = "."; out[10] = ".";
-        out[11] = b[38]; out[12] = b[39];
+    function _footer(RenderContext memory context, DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '<rect x="44" y="1170" width="912" height="80" rx="22" fill="',
+                C_PANEL,
+                '" stroke="',
+                C_BORDER,
+                '"/>',
+                _footerLeft(report),
+                _footerRight(context)
+            )
+        );
+    }
+
+    function _footerLeft(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '<text x="68" y="1201" font-family="Verdana, sans-serif" font-size="13" fill="',
+                C_MUTED,
+                '">Encoded Metrics</text>',
+                '<text x="68" y="1228" font-family="monospace" font-size="15" fill="',
+                C_TEXT,
+                '">priceImpact=',
+                uint256(report.priceImpactBps).toString(),
+                "bps  outputDiscrepancy=",
+                uint256(report.outputDiscrepancyBps).toString(),
+                "bps  ratioDeviation=",
+                uint256(report.ratioDeviationBps).toString(),
+                "bps</text>",
+                '<text x="68" y="1248" font-family="Verdana, sans-serif" font-size="12" fill="',
+                C_MUTED,
+                '">economicTier=',
+                uint256(report.economicSeverityTier).toString(),
+                "  oracleTier=",
+                uint256(report.oracleAgeTier).toString(),
+                "  excessPullTier=",
+                uint256(report.excessPullTier).toString(),
+                "  driftTier=",
+                uint256(report.sharePriceDriftTier).toString(),
+                "  compound=",
+                uint256(report.compoundRiskCount).toString(),
+                "  sweepTier=",
+                uint256(report.sweepSeverityTier).toString(),
+                "</text>"
+            )
+        );
+    }
+
+    function _footerRight(RenderContext memory context) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '<text x="926" y="1205" font-family="monospace" font-size="12" fill="',
+                C_MUTED,
+                '" text-anchor="end">packed=0x',
+                _toMinimalHex(context.packedReport),
+                "</text>"
+            )
+        );
+    }
+
+    function _name(uint256 tokenId, DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                "PreFlight ",
+                _policyKindLabel(report.kind),
+                " ",
+                _operationLabel(report.kind, report.operation),
+                " #",
+                tokenId.toString()
+            )
+        );
+    }
+
+    function _description(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                "Packed on-chain risk report for ",
+                _policyKindLabel(report.kind),
+                " ",
+                _operationLabel(report.kind, report.operation),
+                ". Final category: ",
+                _categoryLabel(report.finalCategory),
+                ". Composite score: ",
+                uint256(report.compositeScore).toString(),
+                "/100. This NFT decodes on-chain findings, off-chain findings, token risk, and encoded severity tiers directly from the stored packed report."
+            )
+        );
+    }
+
+    function _attributes(RenderContext memory context, DecodedReport memory report)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                _baseAttributes(report),
+                ",",
+                _scoreAttributes(report),
+                ",",
+                _findingAttributes(report),
+                ",",
+                _footerAttributes(context, report)
+            )
+        );
+    }
+
+    function _baseAttributes(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _attr("Policy Kind", _policyKindLabel(report.kind)),
+                ",",
+                _attr("Operation", _operationLabel(report.kind, report.operation)),
+                ",",
+                _attr("Final Category", _categoryLabel(report.finalCategory)),
+                ",",
+                _attr("Off-Chain Category", _categoryLabel(report.offChainCategory))
+            )
+        );
+    }
+
+    function _scoreAttributes(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _numAttr("Composite Score", report.compositeScore),
+                ",",
+                _numAttr("On-Chain Score", report.onChainScore),
+                ",",
+                _numAttr("Off-Chain Score", report.offChainScore)
+            )
+        );
+    }
+
+    function _findingAttributes(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _numAttr("On-Chain Triggered Flags", _countSetBits32(report.onChainFlagsPacked)),
+                ",",
+                _numAttr(
+                    "Off-Chain Triggered Flags", _countSetBits32(_clearBit(report.offChainFlagsPacked, OFFCHAIN_VALID))
+                ),
+                ",",
+                _numAttr("Token Triggered Flags", _countSetBits32(report.tokenFlagsPacked)),
+                ",",
+                _attr("Hard Block", report.anyHardBlock ? "YES" : "NO"),
+                ",",
+                _attr("Off-Chain Valid", report.offChainValid ? "YES" : "NO")
+            )
+        );
+    }
+
+    function _footerAttributes(RenderContext memory context, DecodedReport memory report)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                _numAttr("Price Impact BPS", report.priceImpactBps),
+                ",",
+                _numAttr("Output Discrepancy BPS", report.outputDiscrepancyBps),
+                ",",
+                _numAttr("Ratio Deviation BPS", report.ratioDeviationBps),
+                ",",
+                _numAttr("Minted Block", context.mintedBlock),
+                ",",
+                _attr("Source Minter", _hexAddress(context.sourceMinter))
+            )
+        );
+    }
+
+    function _attr(string memory trait, string memory value) internal pure returns (string memory) {
+        return string(abi.encodePacked('{"trait_type":"', trait, '","value":"', value, '"}'));
+    }
+
+    function _numAttr(string memory trait, uint256 value) internal pure returns (string memory) {
+        return
+            string(
+                abi.encodePacked('{"trait_type":"', trait, '","display_type":"number","value":', value.toString(), "}")
+            );
+    }
+
+    function _onChainSubtitle(DecodedReport memory report) internal pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _policyKindLabel(report.kind),
+                " / ",
+                _operationLabel(report.kind, report.operation),
+                " / ",
+                uint256(_countSetBits32(report.onChainFlagsPacked)).toString(),
+                " flagged conditions"
+            )
+        );
+    }
+
+    function _offChainSubtitle(DecodedReport memory report) internal pure returns (string memory) {
+        return report.offChainValid
+            ? string(
+                abi.encodePacked(
+                    uint256(_countSetBits32(_clearBit(report.offChainFlagsPacked, OFFCHAIN_VALID))).toString(),
+                    " off-chain findings decoded from simulation and trace analysis"
+                )
+            )
+            : "No off-chain payload was marked valid for this report";
+    }
+
+    function _tokenSubtitle(DecodedReport memory report) internal pure returns (string memory) {
+        return report.tokenRiskEvaluated
+            ? string(
+                abi.encodePacked(
+                    uint256(_countSetBits32(report.tokenFlagsPacked)).toString(),
+                    " token-level findings / ",
+                    uint256(report.tokenCriticalCount).toString(),
+                    " critical / ",
+                    uint256(report.tokenWarningCount).toString(),
+                    " warning"
+                )
+            )
+            : "Token analysis was not included in the packed report";
+    }
+
+    function _badge(uint256 x, uint256 y, uint256 width, uint256 height, string memory color, string memory label)
+        internal
+        pure
+        returns (string memory)
+    {
+        return string(
+            abi.encodePacked(
+                '<rect x="',
+                x.toString(),
+                '" y="',
+                y.toString(),
+                '" width="',
+                width.toString(),
+                '" height="',
+                height.toString(),
+                '" rx="',
+                (height / 2).toString(),
+                '" fill="',
+                color,
+                '" fill-opacity="0.13" stroke="',
+                color,
+                '" stroke-opacity="0.75"/>',
+                '<text x="',
+                (x + (width / 2)).toString(),
+                '" y="',
+                (y + 22).toString(),
+                '" font-family="Verdana, sans-serif" font-size="12" fill="',
+                color,
+                '" text-anchor="middle">',
+                label,
+                "</text>"
+            )
+        );
+    }
+
+    function _categoryColor(PolicyRiskCategory category) internal pure returns (string memory) {
+        if (category == PolicyRiskCategory.INFO) return C_INFO;
+        if (category == PolicyRiskCategory.WARNING) return C_WARN;
+        if (category == PolicyRiskCategory.MEDIUM) return C_MED;
+        return C_CRIT;
+    }
+
+    function _categoryLabel(PolicyRiskCategory category) internal pure returns (string memory) {
+        if (category == PolicyRiskCategory.INFO) return "INFO";
+        if (category == PolicyRiskCategory.WARNING) return "WARNING";
+        if (category == PolicyRiskCategory.MEDIUM) return "MEDIUM";
+        return "CRITICAL";
+    }
+
+    function _policyKindLabel(PolicyKind kind) internal pure returns (string memory) {
+        if (kind == PolicyKind.ERC4626) return "ERC4626";
+        if (kind == PolicyKind.SWAP_V2) return "SWAP V2";
+        return "LIQUIDITY V2";
+    }
+
+    function _operationLabel(PolicyKind kind, uint8 operation) internal pure returns (string memory) {
+        if (kind == PolicyKind.ERC4626) {
+            if (operation == 0) return "DEPOSIT";
+            if (operation == 1) return "MINT";
+            if (operation == 2) return "WITHDRAW";
+            return "REDEEM";
+        }
+        if (kind == PolicyKind.SWAP_V2) {
+            if (operation == 0) return "EXACT TOKENS IN";
+            if (operation == 1) return "EXACT TOKENS OUT";
+            if (operation == 2) return "EXACT ETH IN";
+            if (operation == 3) return "EXACT ETH OUT";
+            if (operation == 4) return "TOKENS FOR ETH";
+            return "TOKENS FOR EXACT ETH";
+        }
+        if (operation == 0) return "ADD";
+        if (operation == 1) return "ADD ETH";
+        if (operation == 2) return "REMOVE";
+        return "REMOVE ETH";
+    }
+
+    function _onChainFlagCount(PolicyKind kind) internal pure returns (uint8) {
+        if (kind == PolicyKind.ERC4626) return 14;
+        return 15;
+    }
+
+    function _onChainLabel(PolicyKind kind, uint8 operation, uint8 index) internal pure returns (string memory) {
+        if (kind == PolicyKind.ERC4626) {
+            if (index == 0) return "Vault not whitelisted";
+            if (index == 1) return "Vault zero supply";
+            if (index == 2) return "Donation attack";
+            if (index == 3) return "Share inflation risk";
+            if (index == 4) return "Vault balance mismatch";
+            if (index == 5) return "Exchange rate anomaly";
+            if (index == 6) return "Preview revert";
+            if (index == 7) return "Zero shares out";
+            if (index == 8) return "Zero assets out";
+            if (index == 9) return "Dust shares";
+            if (index == 10) return "Dust assets";
+            if (index == 11) return "Exceeds max deposit";
+            if (index == 12) return "Exceeds max redeem";
+            if (index == 13) return "Preview convert mismatch";
+            return "";
+        }
+        if (kind == PolicyKind.SWAP_V2) {
+            if (index == 0) return "Router not trusted";
+            if (index == 1) return "Factory not trusted";
+            if (index == 2) return "Deep multihop";
+            if (index == 3) return "Duplicate token in path";
+            if (index == 4) return "Pool not exists";
+            if (index == 5) return "Factory mismatch";
+            if (index == 6) return "Zero liquidity";
+            if (index == 7) return "Low liquidity";
+            if (index == 8) return "Low LP supply";
+            if (index == 9) return "Pool too new";
+            if (index == 10) return "Severe imbalance";
+            if (index == 11) return "K invariant broken";
+            if (index == 12) return "High swap impact";
+            if (index == 13) return "Flashloan risk";
+            if (index == 14) return "Price manipulated";
+            return "";
+        }
+
+        if (index == 0) return "Router not trusted";
+        if (index == 1) return "Pair not exists";
+        if (index == 2) return "Zero liquidity";
+        if (index == 3) return "Low liquidity";
+        if (index == 4) return "Low LP supply";
+        if (index == 5) return "First depositor risk";
+        if (index == 6) return "Severe imbalance";
+        if (index == 7) return "K invariant broken";
+        if (index == 8) return "Pool too new";
+        if (index == 9) return "Amount ratio deviation";
+        if (index == 10) return "High LP impact";
+        if (index == 11) return "Flashloan risk";
+        if (index == 12) return "Zero LP out";
+        if (index == 13) return "Zero amounts out";
+        if (index == 14) return "Dust LP";
+        return "";
+    }
+
+    function _isOnChainCritical(PolicyKind kind, uint8 operation, uint8 index) internal pure returns (bool) {
+        if (kind == PolicyKind.ERC4626) {
+            if (index == 2 || index == 4 || index == 6) return true;
+            if (index == 7) return operation == 0 || operation == 1;
+            if (index == 8) return operation == 2 || operation == 3;
+            if (index == 11) return operation == 0 || operation == 1;
+            if (index == 12) return operation == 2 || operation == 3;
+            return false;
+        }
+        if (kind == PolicyKind.SWAP_V2) {
+            return index == 3 || index == 4 || index == 6 || index == 11 || index == 14;
+        }
+        return index == 1 || index == 2 || index == 5 || index == 7 || index == 12 || index == 13;
+    }
+
+    function _offChainLabel(uint8 index) internal pure returns (string memory) {
+        if (index == 1) return "Dangerous delegatecall";
+        if (index == 2) return "Selfdestruct path";
+        if (index == 3) return "Approval drain";
+        if (index == 4) return "Owner sweep";
+        if (index == 5) return "Reentrancy behavior";
+        if (index == 6) return "Unexpected create";
+        if (index == 7) return "Upgrade call";
+        if (index == 8) return "Exit frozen";
+        if (index == 9) return "Removal frozen";
+        if (index == 10) return "First deposit";
+        if (index == 11) return "High price impact";
+        if (index == 12) return "High output discrepancy";
+        if (index == 13) return "High ratio deviation";
+        if (index == 14) return "Simulation reverted";
+        if (index == 15) return "Fee on transfer";
+        if (index == 16) return "Oracle stale";
+        if (index == 17) return "Contract unverified";
+        if (index == 18) return "Oracle deviation";
+        if (index == 19) return "Excess pull";
+        if (index == 20) return "Oracle critical";
+        if (index == 21) return "Large sweep";
+        if (index == 22) return "Zero headroom";
+        if (index == 23) return "Simulation hard block";
+        if (index == 24) return "Confirmed transfer fee";
+        if (index == 25) return "Share price drift high";
+        if (index == 26) return "Removal honeypot";
+        return "";
+    }
+
+    function _isOffChainCritical(uint8 index) internal pure returns (bool) {
+        return index == 1 || index == 2 || index == 3 || index == 4 || index == 5 || index == 6 || index == 7
+            || index == 8 || index == 9 || index == 14 || index == 20 || index == 21 || index == 23 || index == 26;
+    }
+
+    function _tokenLabel(uint8 index) internal pure returns (string memory) {
+        if (index == 0) return "Not a contract";
+        if (index == 1) return "Empty bytecode";
+        if (index == 2) return "Decimals revert";
+        if (index == 3) return "Weird decimals";
+        if (index == 4) return "High decimals";
+        if (index == 5) return "Total supply revert";
+        if (index == 6) return "Zero total supply";
+        if (index == 7) return "Very low total supply";
+        if (index == 8) return "Symbol revert";
+        if (index == 9) return "Name revert";
+        if (index == 10) return "EIP-1967 proxy";
+        if (index == 11) return "EIP-1822 proxy";
+        if (index == 12) return "Minimal proxy";
+        if (index == 13) return "Has owner";
+        if (index == 14) return "Ownership renounced";
+        if (index == 15) return "Owner is EOA";
+        if (index == 16) return "Is pausable";
+        if (index == 17) return "Currently paused";
+        if (index == 18) return "Has blacklist";
+        if (index == 19) return "Has blocklist";
+        if (index == 20) return "Possible fee on transfer";
+        if (index == 21) return "Transfer fee getter";
+        if (index == 22) return "Tax function";
+        if (index == 23) return "Possible rebasing";
+        if (index == 24) return "Mint capability";
+        if (index == 25) return "Burn capability";
+        if (index == 26) return "Has permit";
+        if (index == 27) return "Has flash mint";
+        return "";
+    }
+
+    function _isTokenCritical(uint8 index) internal pure returns (bool) {
+        return index == 0 || index == 1 || index == 4 || index == 5 || index == 6 || index == 17;
+    }
+
+    function _chipWidth(string memory label) internal pure returns (uint256) {
+        return 46 + (bytes(label).length * 7);
+    }
+
+    function _shortAddress(address account) internal pure returns (string memory) {
+        string memory full = _hexAddress(account);
+        bytes memory raw = bytes(full);
+        if (raw.length < 12) return full;
+
+        bytes memory out = new bytes(12);
+        out[0] = raw[0];
+        out[1] = raw[1];
+        out[2] = raw[2];
+        out[3] = raw[3];
+        out[4] = raw[4];
+        out[5] = raw[5];
+        out[6] = bytes1(".");
+        out[7] = bytes1(".");
+        out[8] = raw[raw.length - 4];
+        out[9] = raw[raw.length - 3];
+        out[10] = raw[raw.length - 2];
+        out[11] = raw[raw.length - 1];
         return string(out);
     }
 
-    function _shortNum(uint256 n) internal pure returns (string memory) {
-        if (n == 0)      return "0";
-        if (n >= 1e18)   return string.concat((n / 1e15).toString(), "e15");
-        if (n >= 1e9)    return string.concat((n / 1e6).toString(),  "e6");
-        if (n >= 1e6)    return string.concat((n / 1e3).toString(),  "e3");
-        return n.toString();
+    function _hexAddress(address account) internal pure returns (string memory) {
+        return Strings.toHexString(uint256(uint160(account)), 20);
+    }
+
+    function _toMinimalHex(uint256 value) internal pure returns (string memory) {
+        return Strings.toHexString(value);
+    }
+
+    function _decode(uint256 packedReport) internal pure returns (DecodedReport memory report) {
+        report.kind = PolicyKind(_extract(packedReport, SHIFT_POLICY_KIND, 2));
+        report.operation = uint8(_extract(packedReport, SHIFT_OPERATION, 4));
+        report.version = uint8(_extract(packedReport, SHIFT_POLICY_VERSION, 8));
+        report.finalCategory = PolicyRiskCategory(_extract(packedReport, SHIFT_FINAL_CATEGORY, 2));
+        report.offChainCategory = PolicyRiskCategory(_extract(packedReport, SHIFT_OFFCHAIN_CATEGORY, 2));
+        report.compositeScore = uint8(_extract(packedReport, SHIFT_COMPOSITE_SCORE, 8));
+        report.onChainScore = uint8(_extract(packedReport, SHIFT_ONCHAIN_SCORE, 8));
+        report.offChainScore = uint8(_extract(packedReport, SHIFT_OFFCHAIN_SCORE, 8));
+        report.onChainCriticalCount = uint8(_extract(packedReport, SHIFT_ONCHAIN_CRITICAL, 6));
+        report.onChainWarningCount = uint8(_extract(packedReport, SHIFT_ONCHAIN_WARNING, 6));
+        report.offChainFindingCount = uint8(_extract(packedReport, SHIFT_OFFCHAIN_FINDINGS, 6));
+        report.anyHardBlock = _extract(packedReport, SHIFT_ANY_HARD_BLOCK, 1) == 1;
+        report.offChainValid = _extract(packedReport, SHIFT_OFFCHAIN_VALID, 1) == 1;
+        report.onChainFlagsPacked = uint32(_extract(packedReport, SHIFT_ONCHAIN_FLAGS, 32));
+        report.offChainFlagsPacked = uint32(_extract(packedReport, SHIFT_OFFCHAIN_FLAGS, 32));
+        report.tokenFlagsPacked = uint32(_extract(packedReport, SHIFT_TOKEN_FLAGS, 32));
+        report.priceImpactBps = uint16(_extract(packedReport, SHIFT_PRICE_IMPACT, 16));
+        report.outputDiscrepancyBps = uint16(_extract(packedReport, SHIFT_OUTPUT_DISCREPANCY, 16));
+        report.ratioDeviationBps = uint16(_extract(packedReport, SHIFT_RATIO_DEVIATION, 16));
+        report.tokenCriticalCount = uint8(_extract(packedReport, SHIFT_TOKEN_CRITICAL, 6));
+        report.tokenWarningCount = uint8(_extract(packedReport, SHIFT_TOKEN_WARNING, 6));
+        report.tokenRiskEvaluated = _extract(packedReport, SHIFT_TOKEN_EVALUATED, 1) == 1;
+        report.economicSeverityTier = uint8(_extract(packedReport, SHIFT_ECONOMIC_TIER, 3));
+        report.oracleAgeTier = uint8(_extract(packedReport, SHIFT_ORACLE_AGE_TIER, 3));
+        report.excessPullTier = uint8(_extract(packedReport, SHIFT_EXCESS_PULL_TIER, 3));
+        report.sharePriceDriftTier = uint8(_extract(packedReport, SHIFT_SHARE_DRIFT_TIER, 3));
+        report.compoundRiskCount = uint8(_extract(packedReport, SHIFT_COMPOUND_COUNT, 3));
+        report.simulationRevertBlock = _extract(packedReport, SHIFT_SIM_REVERT_BLOCK, 1) == 1;
+        report.sweepSeverityTier = uint8(_extract(packedReport, SHIFT_SWEEP_TIER, 3));
+        report.enhancedPresent = _extract(packedReport, SHIFT_ENHANCED_PRESENT, 1) == 1;
+    }
+
+    function _extract(uint256 packed, uint8 shift, uint8 width) internal pure returns (uint256) {
+        return (packed >> shift) & ((uint256(1) << width) - 1);
+    }
+
+    function _isSet(uint32 packed, uint8 bit) internal pure returns (bool) {
+        return ((packed >> bit) & 1) == 1;
+    }
+
+    function _clearBit(uint32 packed, uint8 bit) internal pure returns (uint32) {
+        return packed & ~(uint32(1) << bit);
+    }
+
+    function _countSetBits32(uint32 value) internal pure returns (uint8 count) {
+        while (value != 0) {
+            value &= value - 1;
+            unchecked {
+                ++count;
+            }
+        }
     }
 }

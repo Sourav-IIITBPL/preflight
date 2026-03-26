@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {PolicyRiskCategory,PolicyKind,PolicyNormalizedOffChainResult,PolicyCoreView,PolicyOffChainView,
-PolicyOnChainPack , PolicyTokenPack, PolicyTokenFlagsView } from "../types/OnChainTypes.sol";
+import {
+    ExtendedEconomicData,
+    PolicyRiskCategory,
+    PolicyKind,
+    PolicyNormalizedOffChainResult,
+    PolicyCoreView,
+    PolicyOffChainView,
+    PolicyOnChainPack,
+    PolicyTokenPack,
+    PolicyTokenFlagsView
+} from "../types/OnChainTypes.sol";
 import {SwapOffChainResult, SwapOpType} from "../types/OffChainTypes.sol";
-import {TokenGuardResult,SwapV2GuardResult} from "../types/OnChainTypes.sol";
-import {BaseRiskPolicy} from "./BaseRiskPolicy.sol";
+import {TokenGuardResult, SwapV2GuardResult} from "../types/OnChainTypes.sol";
+import {BaseRiskPolicy, EnhancedCoreView} from "./BaseRiskPolicy.sol";
 
 struct SwapV2OnChainView {
     bool routerNotTrusted;
@@ -29,6 +38,7 @@ struct SwapV2DecodedRiskReport {
     PolicyCoreView core;
     PolicyOffChainView offChain;
     PolicyTokenFlagsView tokenRisk;
+    EnhancedCoreView enhancedView;
     SwapOpType operation;
     SwapV2OnChainView onChain;
 }
@@ -50,21 +60,26 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
     uint8 internal constant FLAG_FLASHLOAN_RISK = 13;
     uint8 internal constant FLAG_PRICE_MANIPULATED = 14;
 
-    
-    function evaluate(
-        bytes calldata offChainData,
-        SwapV2GuardResult calldata onChainData,
-        SwapOpType operation
-    ) external pure returns (uint256 packedReport) {
+    /**
+     * @notice Full evaluation with token-level analysis.
+     *
+     * @param offChainData  ABI-encoded SwapOffChainResult from CRE simulation.
+     * @param onChainData   SwapV2GuardRiskInput (guard check result without token arrays).
+     * @param operation     SwapOpType enum value.
+     */
+    function evaluate(bytes calldata offChainData, SwapV2GuardResult calldata onChainData, SwapOpType operation)
+        external
+        pure
+        returns (uint256 packedReport)
+    {
         return _evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult));
     }
 
-   
-    function previewReport(
-        bytes calldata offChainData,
-        SwapV2GuardResult calldata onChainData,
-        SwapOpType operation
-    ) external pure returns (SwapV2DecodedRiskReport memory report) {
+    function previewReport(bytes calldata offChainData, SwapV2GuardResult calldata onChainData, SwapOpType operation)
+        external
+        pure
+        returns (SwapV2DecodedRiskReport memory report)
+    {
         return _decodeReport(_evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult)));
     }
 
@@ -72,7 +87,6 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         return _decodeReport(packedReport);
     }
 
-   
     function packOnChain(SwapV2GuardResult calldata onChainData)
         external
         pure
@@ -101,9 +115,12 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
     function decodeOffChain(bytes calldata offChainData)
         external
         pure
-        returns (PolicyNormalizedOffChainResult memory normalized)
+        returns (PolicyNormalizedOffChainResult memory normalized, ExtendedEconomicData memory economicData)
     {
-        return _decodeOffChain(offChainData);
+        if (offChainData.length == 0) return (normalized, economicData);
+        SwapOffChainResult memory offChainResult = abi.decode(offChainData, (SwapOffChainResult));
+        normalized = _normalizeSwap(offChainResult);
+        economicData = _extractSwapEconomic(offChainResult);
     }
 
     function _evaluatePacked(
@@ -112,10 +129,18 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         SwapOpType operation,
         PolicyTokenPack memory tokenPack
     ) internal pure returns (uint256 packedReport) {
-        PolicyOnChainPack memory onChain = _packOnChain(onChainData, tokenPack);
-        PolicyNormalizedOffChainResult memory offChain = _decodeOffChain(offChainData);
+        PolicyNormalizedOffChainResult memory offChain;
+        ExtendedEconomicData memory economicData;
 
-        packedReport = _buildPackedPolicy(
+        if (offChainData.length > 0) {
+            SwapOffChainResult memory offChainResult = abi.decode(offChainData, (SwapOffChainResult));
+            offChain = _normalizeSwap(offChainResult);
+            economicData = _extractSwapEconomic(offChainResult);
+        }
+
+        PolicyOnChainPack memory onChain = _packOnChain(onChainData, tokenPack);
+
+        return _buildPackedPolicy(
             PolicyKind.SWAP_V2,
             uint8(operation),
             onChain.criticalCount,
@@ -123,15 +148,12 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
             onChain.anyHardBlock,
             onChain.flagsPacked,
             tokenPack,
-            offChain
+            offChain,
+            economicData
         );
     }
 
-    function _decodeReport(uint256 packedReport)
-        internal
-        pure
-        returns (SwapV2DecodedRiskReport memory report)
-    {
+    function _decodeReport(uint256 packedReport) internal pure returns (SwapV2DecodedRiskReport memory report) {
         (PolicyCoreView memory core, PolicyOffChainView memory offChain, PolicyTokenFlagsView memory tokenRisk) =
             _decodeBase(packedReport);
         _assertKind(core.kind, PolicyKind.SWAP_V2);
@@ -251,17 +273,11 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         tokenPack = _toTokenPack(flagsPacked, len != 0);
     }
 
-    function _decodeOffChain(bytes calldata offChainData)
+    function _normalizeSwap(SwapOffChainResult memory offChainReport)
         internal
         pure
         returns (PolicyNormalizedOffChainResult memory normalized)
     {
-        if (offChainData.length == 0) {
-            return normalized;
-        }
-
-        bytes memory raw = offChainData;
-        SwapOffChainResult memory offChainReport = abi.decode(raw, (SwapOffChainResult));
         normalized.valid = offChainReport.simulatedAt != 0;
         normalized.riskScore = _capRiskScore(offChainReport.riskScore);
         normalized.hasDangerousDelegateCall = offChainReport.trace.hasDangerousDelegateCall;
@@ -275,13 +291,42 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         normalized.isRemovalFrozen = false;
         normalized.isFirstDeposit = false;
         normalized.isFeeOnTransfer = offChainReport.economic.isFeeOnTransfer;
-        normalized.anyOracleStale = offChainReport.economic.tokenInOracleStale || offChainReport.economic.tokenOutOracleStale;
+        normalized.anyOracleStale =
+            offChainReport.economic.tokenInOracleStale || offChainReport.economic.tokenOutOracleStale;
         normalized.anyContractUnverified =
-            !(offChainReport.routerVerified && offChainReport.tokenInVerified && offChainReport.tokenOutVerified);
+        !(offChainReport.routerVerified && offChainReport.tokenInVerified && offChainReport.tokenOutVerified);
         normalized.oracleDeviation = offChainReport.economic.oracleDeviation;
         normalized.simulationReverted = offChainReport.economic.simulationReverted;
         normalized.priceImpactBps = _capUint16(offChainReport.economic.priceImpactBps);
         normalized.outputDiscrepancyBps = 0;
         normalized.ratioDeviationBps = 0;
+    }
+
+    /**
+     * @dev Extracts rich numeric economic data from SwapOffChainResult.
+     */
+    function _extractSwapEconomic(SwapOffChainResult memory offChainReport)
+        internal
+        pure
+        returns (ExtendedEconomicData memory economicData)
+    {
+        economicData.priceImpactBps = offChainReport.economic.priceImpactBps;
+        economicData.measuredFeePercent = offChainReport.economic.measuredFeePercent;
+        economicData.inputHeadroomBps = offChainReport.economic.inputHeadroomBps;
+        economicData.tokenInOracleAge = offChainReport.economic.tokenInOracleAge;
+        economicData.tokenOutOracleAge = offChainReport.economic.tokenOutOracleAge;
+        economicData.oracleFairAmountOut = offChainReport.economic.oracleFairAmountOut;
+        economicData.actualAmountOut = offChainReport.economic.actualAmountOut;
+        economicData.simulationReverted = offChainReport.economic.simulationReverted;
+        economicData.feeOnTransferConfirmed = offChainReport.economic.isFeeOnTransfer;
+
+        // Derive our own oracle deviation % from raw amounts.
+        // Deviation = |fair - actual| / fair × 10000 in bps.
+        if (economicData.oracleFairAmountOut > 0 && economicData.actualAmountOut > 0) {
+            uint256 fair = economicData.oracleFairAmountOut;
+            uint256 actual = economicData.actualAmountOut;
+            uint256 delta = fair > actual ? fair - actual : actual - fair;
+            economicData.priceImpactBps = (delta * 10_000) / fair; // override with computed value
+        }
     }
 }

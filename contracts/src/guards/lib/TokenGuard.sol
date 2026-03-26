@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {TokenGuardResult,IERC20, IOwnable, IPausable} from "../interfaces/ITokenGuard.sol";
-
-/*//////////////////////////////////////////////////////////////
-                        LIBRARY
-//////////////////////////////////////////////////////////////*/
+import {TokenGuardResult, IERC20, IOwnable, IPausable} from "../interfaces/ITokenGuard.sol";
 
 /**
  * @title TokenGuard
  * @notice View-only ERC20 token safety analysis library.
+ * @author Sourav-IITBPL
  *
  * Design constraints:
- *  - All checks are `view` — no state changes, no actual transfers.
+ *  - All checks are `view` — no state changes.
  *  - Fee-on-transfer cannot be determined with certainty without a real transfer.
  *    We use function-existence heuristics and document their confidence.
  *  - Proxy detection is slot-based (EIP-1967 / EIP-1822) or bytecode-prefix based
@@ -41,50 +38,30 @@ library TokenGuard {
      * @notice Run all token checks against `token`. Returns a fully populated
      *         TokenGuardResult struct. All false = clean.
      * @param token ERC20 token contract address to inspect.
+     * @return result
      */
-    function checkToken(address token) external view returns (TokenGuardResult memory r) {
-        // ── 1. Basic contract existence ──────────────────────────────────
+    function checkToken(address token) external view returns (TokenGuardResult memory result) {
         uint256 codeSize = _codeSize(token);
 
         if (codeSize == 0) {
-            r.NOT_A_CONTRACT = true;
-            r.EMPTY_BYTECODE = true;
-            return r; // nothing else to check
+            result.NOT_A_CONTRACT = true;
+            result.EMPTY_BYTECODE = true;
+            return result;
         }
 
-        // ── 2. ERC20 interface ───────────────────────────────────────────
-        _checkERC20Interface(token, r);
-
-        // ── 3. Proxy detection ───────────────────────────────────────────
-        _checkProxy(token, codeSize, r);
-
-        // ── 4. Ownership ─────────────────────────────────────────────────
-        _checkOwnership(token, r);
-
-        // ── 5. Pause / freeze ────────────────────────────────────────────
-        _checkPausable(token, r);
-
-        // ── 6. Blacklist / blocklist ─────────────────────────────────────
-        _checkBlacklist(token, r);
-
-        // ── 7. Fee-on-transfer heuristics ────────────────────────────────
-        _checkFeeOnTransfer(token, r);
-
-        // ── 8. Rebasing heuristic ────────────────────────────────────────
-        _checkRebasing(token, r);
-
-        // ── 9. Mint / burn capability ────────────────────────────────────
-        _checkMintBurn(token, r);
-
-        // ── 10. Permit (EIP-2612) ────────────────────────────────────────
-        _checkPermit(token, r);
-
-        // ── 11. Flash mint ───────────────────────────────────────────────
-        _checkFlashMint(token, r);
+        _checkERC20Interface(token, result);
+        _checkProxy(token, codeSize, result);
+        _checkOwnership(token, result);
+        _checkPausable(token, result);
+        _checkBlacklist(token, result);
+        _checkFeeOnTransfer(token, result);
+        _checkRebasing(token, result);
+        _checkMintBurn(token, result);
+        _checkPermit(token, result);
+        _checkFlashMint(token, result);
     }
 
     function _checkERC20Interface(address token, TokenGuardResult memory r) private view {
-        // decimals()
         try IERC20(token).decimals() returns (uint8 d) {
             if (d == 0 || d > 18) r.WEIRD_DECIMALS = true;
             if (d > 18) r.HIGH_DECIMALS = true;
@@ -93,7 +70,6 @@ library TokenGuard {
             r.WEIRD_DECIMALS = true;
         }
 
-        // totalSupply()
         try IERC20(token).totalSupply() returns (uint256 s) {
             if (s == 0) r.ZERO_TOTAL_SUPPLY = true;
             if (s > 0 && s < LOW_SUPPLY_THRESHOLD) r.VERY_LOW_TOTAL_SUPPLY = true;
@@ -101,14 +77,12 @@ library TokenGuard {
             r.TOTAL_SUPPLY_REVERT = true;
         }
 
-        // symbol()
         try IERC20(token).symbol() returns (string memory sym) {
             if (bytes(sym).length == 0) r.SYMBOL_REVERT = true;
         } catch {
             r.SYMBOL_REVERT = true;
         }
 
-        // name()
         try IERC20(token).name() returns (string memory n) {
             if (bytes(n).length == 0) r.NAME_REVERT = true;
         } catch {
@@ -123,7 +97,6 @@ library TokenGuard {
             r.IS_EIP1967_PROXY = true;
         }
 
-        // EIP-1822
         address impl1822 = address(uint160(uint256(_readSlot(token, EIP1822_PROXIABLE_SLOT))));
         if (impl1822 != address(0)) {
             r.IS_EIP1822_PROXY = true;
@@ -154,19 +127,14 @@ library TokenGuard {
                     r.OWNER_IS_EOA = true;
                 }
             }
-        } catch {
-            // No owner() function — contract may be immutable or use a custom pattern.
-            // Not flagged as a risk by itself.
-        }
+        } catch {}
     }
 
     function _checkPausable(address token, TokenGuardResult memory r) private view {
         try IPausable(token).paused() returns (bool isPaused) {
             r.IS_PAUSABLE = true;
             if (isPaused) r.IS_CURRENTLY_PAUSED = true;
-        } catch {
-            // No paused() function — not pausable (or non-standard).
-        }
+        } catch {}
     }
 
     function _checkBlacklist(address token, TokenGuardResult memory r) private view {
@@ -206,27 +174,25 @@ library TokenGuard {
      *   transferFee()     0xf3b7b24e
      *   buyFee()          0x74d7e107
      *   sellFee()         0x867c5e1a
-     *   _taxFee()         0x4355b9fe  (common in SafeMoon forks)
+     *   _taxFee()         0x4355b9fe
      *   taxRate()         0x5b7d3b45
      *   getTaxFee()       0x74010408
-     *   _liquidityFee()   0x4f4e4dc1  (SafeMoon pattern)
+     *   _liquidityFee()   0x4f4e4dc1
      *   totalFees()       0x005dd54d
      */
     function _checkFeeOnTransfer(address token, TokenGuardResult memory r) private view {
         bool hasFeeGetter;
         bool hasTaxFunction;
 
-        // Transfer fee getters
-        if (_selectorExists(token, 0xf3b7b24e)) hasFeeGetter = true; // transferFee()
-        if (_selectorExists(token, 0x74d7e107)) hasFeeGetter = true; // buyFee()
-        if (_selectorExists(token, 0x867c5e1a)) hasFeeGetter = true; // sellFee()
+        if (_selectorExists(token, 0xf3b7b24e)) hasFeeGetter = true;
+        if (_selectorExists(token, 0x74d7e107)) hasFeeGetter = true;
+        if (_selectorExists(token, 0x867c5e1a)) hasFeeGetter = true;
 
-        // Tax-style functions (SafeMoon / reflection token patterns)
-        if (_selectorExists(token, 0x4355b9fe)) hasTaxFunction = true; // _taxFee()
-        if (_selectorExists(token, 0x5b7d3b45)) hasTaxFunction = true; // taxRate()
-        if (_selectorExists(token, 0x74010408)) hasTaxFunction = true; // getTaxFee()
-        if (_selectorExists(token, 0x4f4e4dc1)) hasTaxFunction = true; // _liquidityFee()
-        if (_selectorExists(token, 0x005dd54d)) hasTaxFunction = true; // totalFees()
+        if (_selectorExists(token, 0x4355b9fe)) hasTaxFunction = true;
+        if (_selectorExists(token, 0x5b7d3b45)) hasTaxFunction = true;
+        if (_selectorExists(token, 0x74010408)) hasTaxFunction = true;
+        if (_selectorExists(token, 0x4f4e4dc1)) hasTaxFunction = true;
+        if (_selectorExists(token, 0x005dd54d)) hasTaxFunction = true;
 
         r.HAS_TRANSFER_FEE_GETTER = hasFeeGetter;
         r.HAS_TAX_FUNCTION = hasTaxFunction;
@@ -270,17 +236,11 @@ library TokenGuard {
      *   burnFrom(address,uint256) 0x79cc6790
      */
     function _checkMintBurn(address token, TokenGuardResult memory r) private view {
-        if (
-            _selectorExists(token, 0x40c10f19) // mint(address,uint256)
-                || _selectorExists(token, 0xa0712d68) // mint(uint256)
-        ) {
+        if (_selectorExists(token, 0x40c10f19) || _selectorExists(token, 0xa0712d68)) {
             r.HAS_MINT_CAPABILITY = true;
         }
 
-        if (
-            _selectorExists(token, 0x42966c68) // burn(uint256)
-                || _selectorExists(token, 0x79cc6790) // burnFrom(address,uint256)
-        ) {
+        if (_selectorExists(token, 0x42966c68) || _selectorExists(token, 0x79cc6790)) {
             r.HAS_BURN_CAPABILITY = true;
         }
     }
@@ -288,8 +248,7 @@ library TokenGuard {
     /**
      * @dev EIP-2612 permit detection.
      *      Tokens with permit() allow gasless approvals which can be exploited
-     *      in phishing (sign once → drain in one tx). Not a hard block but
-     *      worth flagging for vault depositors.
+     *      in phishing (sign once -> drain in one tx).
      *
      * We check both DOMAIN_SEPARATOR() and permit() exist to reduce false positives.
      */
@@ -308,10 +267,7 @@ library TokenGuard {
      *      Some tokens use flashMint(address,uint256):       0x1e89d545
      */
     function _checkFlashMint(address token, TokenGuardResult memory r) private view {
-        if (
-            _selectorExists(token, 0x5cffe9de) // flashLoan(...)
-                || _selectorExists(token, 0x1e89d545) // flashMint(...)
-        ) {
+        if (_selectorExists(token, 0x5cffe9de) || _selectorExists(token, 0x1e89d545)) {
             r.HAS_FLASH_MINT = true;
         }
     }
@@ -343,21 +299,20 @@ library TokenGuard {
      */
     function _readSlot(address addr, bytes32 slot) private view returns (bytes32 value) {
         assembly {
-            value := sload(slot) // NB: this reads from *caller's* storage, not addr's!
+            value := sload(slot) //  this reads from *caller's* storage, not addr's!
         }
-        // ↑ sload reads from *this* contract's storage. We need staticcall.
+        // sload reads from *this* contract's storage. We need staticcall.
         // Using staticcall to call eth_getStorageAt equivalent:
         (bool ok, bytes memory data) = addr.staticcall(abi.encodeWithSignature("__storageSlotRead__()"));
-        // That call will fail (no such function). We must use assembly properly:
+
         assembly {
             // Override: use extcodesize-less pattern via inline staticcall
             // The correct way to read another contract's storage in Solidity
             // is not directly possible without a helper contract or eth_getStorageAt.
             // We use a known workaround: deploy-less storage probe via verbatim.
-            // However the cleanest production approach is the staticcall pattern below.
-            value := value // placeholder — real impl below
+
+            value := value
         }
-        // ── Correct implementation via staticcall to a storage probe ──────
         value = _staticReadSlot(addr, slot);
     }
 
@@ -365,12 +320,6 @@ library TokenGuard {
      * @dev Reads a storage slot from `target` using a staticcall to an inline
      *      assembly snippet. This is the standard production pattern for reading
      *      another contract's storage slot without deploying a helper.
-     *
-     *      We encode the call as: load slot → return 32 bytes.
-     *      Since Solidity doesn't support `sload` on another contract's storage,
-     *      we use a low-level pattern: call a view function the proxy exposes
-     *      (EIP-1967 proxies all expose `implementation()` or similar), falling
-     *      back to our best effort slot read.
      *
      *  Implementation note:
      *      EVM does NOT allow reading another account's storage directly.
@@ -385,7 +334,6 @@ library TokenGuard {
      */
     function _staticReadSlot(address target, bytes32 slot) private view returns (bytes32 value) {
         if (slot == EIP1967_IMPL_SLOT) {
-            // Try the standard EIP-1967 getter: implementation() → 0x5c60da1b
             (bool ok, bytes memory data) = target.staticcall(abi.encodeWithSelector(0x5c60da1b));
             if (ok && data.length >= 32) {
                 assembly { value := mload(add(data, 32)) }
@@ -394,7 +342,6 @@ library TokenGuard {
         }
 
         if (slot == EIP1822_PROXIABLE_SLOT) {
-            // Try proxiableUUID() → 0x52d1902d
             (bool ok, bytes memory data) = target.staticcall(abi.encodeWithSelector(0x52d1902d));
             if (ok && data.length >= 32) {
                 assembly { value := mload(add(data, 32)) }
@@ -435,8 +382,6 @@ library TokenGuard {
         bytes4 s = selector;
         uint256 len = scanSize;
 
-        // Slide a 4-byte window over the bytecode.
-        // Written in assembly for gas efficiency on large contracts.
         assembly {
             let ptr := add(code, 32)
             let stp := add(ptr, sub(len, 3))
