@@ -7,6 +7,7 @@ import {SVGRenderer} from "./SVGRenderer.sol";
 
 /**
  * @title RiskReportNFT
+ * @author Sourav-IITBPL
  * @notice Immutable on-chain audit NFT for packed PreFlight policy reports.
  *         The NFT stores the original 256-bit packed risk report and renders a
  *         fully on-chain SVG/JSON metadata payload at `tokenURI`.

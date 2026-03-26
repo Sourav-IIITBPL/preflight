@@ -12,10 +12,23 @@ import {SwapV2GuardResult} from "../../types/OnChainTypes.sol";
 import {SwapV2RiskPolicy, SwapV2DecodedRiskReport} from "../../riskpolicies/SwapV2RiskPolicy.sol";
 import {SwapOpType} from "../../types/OffChainTypes.sol";
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Minimal interface for minting packed risk report NFTs.
+ */
 interface IRiskReportNFT {
+    /**
+     * @notice Mints a risk report NFT for a packed report payload.
+     * @param packedRiskReport Packed risk report value.
+     * @return tokenId Minted NFT identifier.
+     */
     function mint(uint256 packedRiskReport) external returns (uint256 tokenId);
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Router for guarded Uniswap V2-style swap flows with risk report minting.
+ */
 contract SwapV2Router is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -49,6 +62,12 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 packedRiskReport
     );
 
+    /**
+     * @notice Deploys the router with the swap guard, risk policy, and report NFT.
+     * @param swapGuard_ Address of the swap guard contract.
+     * @param riskPolicy_ Address of the swap risk policy contract.
+     * @param riskReportNFT_ Address of the risk report NFT contract.
+     */
     constructor(address swapGuard_, address riskPolicy_, address riskReportNFT_) {
         if (swapGuard_ == address(0) || riskPolicy_ == address(0) || riskReportNFT_ == address(0)) {
             revert ZeroAddress();
@@ -59,8 +78,13 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         riskReportNFT = IRiskReportNFT(riskReportNFT_);
     }
 
+    /// @notice Accepts ETH refunds from router calls.
     receive() external payable {}
 
+    /**
+     * @notice Updates the swap guard used by the router.
+     * @param newGuard Address of the new swap guard.
+     */
     function setSwapGuard(address newGuard) external onlyOwner {
         if (newGuard == address(0)) {
             revert ZeroAddress();
@@ -69,6 +93,10 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         emit SwapGuardUpdated(newGuard);
     }
 
+    /**
+     * @notice Updates the risk policy used to evaluate swap checks.
+     * @param newRiskPolicy Address of the new swap risk policy contract.
+     */
     function setRiskPolicy(address newRiskPolicy) external onlyOwner {
         if (newRiskPolicy == address(0)) {
             revert ZeroAddress();
@@ -77,6 +105,10 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         emit RiskPolicyUpdated(newRiskPolicy);
     }
 
+    /**
+     * @notice Updates the NFT contract used to mint swap risk reports.
+     * @param newRiskReportNFT Address of the new risk report NFT contract.
+     */
     function setRiskReportNFT(address newRiskReportNFT) external onlyOwner {
         if (newRiskReportNFT == address(0)) {
             revert ZeroAddress();
@@ -85,6 +117,16 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         emit RiskReportNFTUpdated(newRiskReportNFT);
     }
 
+    /**
+     * @notice Previews a guarded exact-input token-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountIn Exact token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return result Guard result for the swap.
+     * @return packedRiskReport Packed risk report for the swap.
+     * @return report Decoded risk report for the swap.
+     */
     function previewGuardedSwapExactTokensForTokens(
         address ammRouter,
         address[] calldata path,
@@ -97,6 +139,16 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
     }
 
+    /**
+     * @notice Previews a guarded exact-output token-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountInMax Maximum token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return result Guard result for the swap.
+     * @return packedRiskReport Packed risk report for the swap.
+     * @return report Decoded risk report for the swap.
+     */
     function previewGuardedSwapTokensForExactTokens(
         address ammRouter,
         address[] calldata path,
@@ -109,6 +161,16 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
     }
 
+    /**
+     * @notice Previews a guarded exact-input ETH-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountIn Exact ETH input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return result Guard result for the swap.
+     * @return packedRiskReport Packed risk report for the swap.
+     * @return report Decoded risk report for the swap.
+     */
     function previewGuardedSwapExactETHForTokens(
         address ammRouter,
         address[] calldata path,
@@ -122,6 +184,16 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_ETH_IN);
     }
 
+    /**
+     * @notice Previews a guarded exact-output ETH-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountInMax Maximum ETH input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return result Guard result for the swap.
+     * @return packedRiskReport Packed risk report for the swap.
+     * @return report Decoded risk report for the swap.
+     */
     function previewGuardedSwapETHForExactTokens(
         address ammRouter,
         address[] calldata path,
@@ -135,6 +207,16 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_ETH_OUT);
     }
 
+    /**
+     * @notice Previews a guarded exact-input token-to-ETH swap.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountIn Exact token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return result Guard result for the swap.
+     * @return packedRiskReport Packed risk report for the swap.
+     * @return report Decoded risk report for the swap.
+     */
     function previewGuardedSwapExactTokensForETH(
         address ammRouter,
         address[] calldata path,
@@ -148,6 +230,16 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
     }
 
+    /**
+     * @notice Previews a guarded exact-output token-to-ETH swap.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountInMax Maximum token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return result Guard result for the swap.
+     * @return packedRiskReport Packed risk report for the swap.
+     * @return report Decoded risk report for the swap.
+     */
     function previewGuardedSwapTokensForExactETH(
         address ammRouter,
         address[] calldata path,
@@ -161,6 +253,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
     }
 
+    /**
+     * @notice Stores and mints the risk report for an exact-input token-to-token swap check.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountIn Exact token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function storeAndMintSwapExactTokensForTokensCheck(
         address ammRouter,
         address[] calldata path,
@@ -170,6 +270,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
     }
 
+    /**
+     * @notice Stores and mints the risk report for an exact-output token-to-token swap check.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountInMax Maximum token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function storeAndMintSwapTokensForExactTokensCheck(
         address ammRouter,
         address[] calldata path,
@@ -179,6 +287,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
     }
 
+    /**
+     * @notice Stores and mints the risk report for an exact-input ETH-to-token swap check.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountIn Exact ETH input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function storeAndMintSwapExactETHForTokensCheck(
         address ammRouter,
         address[] calldata path,
@@ -189,6 +305,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_ETH_IN);
     }
 
+    /**
+     * @notice Stores and mints the risk report for an exact-output ETH-to-token swap check.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountInMax Maximum ETH input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function storeAndMintSwapETHForExactTokensCheck(
         address ammRouter,
         address[] calldata path,
@@ -199,6 +323,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_ETH_OUT);
     }
 
+    /**
+     * @notice Stores and mints the risk report for an exact-input token-to-ETH swap check.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountIn Exact token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function storeAndMintSwapExactTokensForETHCheck(
         address ammRouter,
         address[] calldata path,
@@ -209,6 +341,14 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
     }
 
+    /**
+     * @notice Stores and mints the risk report for an exact-output token-to-ETH swap check.
+     * @param ammRouter Address of the AMM router.
+     * @param path Swap path.
+     * @param amountInMax Maximum token input amount.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function storeAndMintSwapTokensForExactETHCheck(
         address ammRouter,
         address[] calldata path,
@@ -219,6 +359,18 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
     }
 
+    /**
+     * @notice Executes a guarded exact-input token-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param amountIn Exact token input amount.
+     * @param amountOutMin Minimum acceptable output amount.
+     * @param path Swap path.
+     * @param receiver Recipient of the output tokens.
+     * @param deadline Swap deadline timestamp.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return amounts Router output amounts per hop.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function guardedSwapExactTokensForTokens(
         address ammRouter,
         uint256 amountIn,
@@ -243,6 +395,19 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Executes a guarded exact-output token-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param amountOut Exact output amount requested.
+     * @param amountInMax Maximum token input amount.
+     * @param path Swap path.
+     * @param receiver Recipient of the output tokens.
+     * @param refundRecipient Recipient of any unused input tokens.
+     * @param deadline Swap deadline timestamp.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return amounts Router output amounts per hop.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function guardedSwapTokensForExactTokens(
         address ammRouter,
         uint256 amountOut,
@@ -273,6 +438,17 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Executes a guarded exact-input ETH-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param amountOutMin Minimum acceptable token output.
+     * @param path Swap path.
+     * @param receiver Recipient of the output tokens.
+     * @param deadline Swap deadline timestamp.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return amounts Router output amounts per hop.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function guardedSwapExactETHForTokens(
         address ammRouter,
         uint256 amountOutMin,
@@ -299,6 +475,18 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Executes a guarded exact-output ETH-to-token swap.
+     * @param ammRouter Address of the AMM router.
+     * @param amountOut Exact token output requested.
+     * @param path Swap path.
+     * @param receiver Recipient of the output tokens.
+     * @param refundRecipient Recipient of refunded ETH.
+     * @param deadline Swap deadline timestamp.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return amounts Router output amounts per hop.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function guardedSwapETHForExactTokens(
         address ammRouter,
         uint256 amountOut,
@@ -335,6 +523,18 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Executes a guarded exact-input token-to-ETH swap.
+     * @param ammRouter Address of the AMM router.
+     * @param amountIn Exact token input amount.
+     * @param amountOutMin Minimum acceptable ETH output.
+     * @param path Swap path.
+     * @param receiver Recipient of the ETH output.
+     * @param deadline Swap deadline timestamp.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return amounts Router output amounts per hop.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function guardedSwapExactTokensForETH(
         address ammRouter,
         uint256 amountIn,
@@ -365,6 +565,19 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Executes a guarded exact-output token-to-ETH swap.
+     * @param ammRouter Address of the AMM router.
+     * @param amountOut Exact ETH output requested.
+     * @param amountInMax Maximum token input amount.
+     * @param path Swap path.
+     * @param receiver Recipient of the ETH output.
+     * @param refundRecipient Recipient of any unused input tokens.
+     * @param deadline Swap deadline timestamp.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return amounts Router output amounts per hop.
+     * @return packedRiskReport Packed risk report for the swap.
+     */
     function guardedSwapTokensForExactETH(
         address ammRouter,
         uint256 amountOut,
@@ -402,10 +615,21 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Decodes a packed swap risk report.
+     * @param packedRiskReport Packed risk report value.
+     * @return report Decoded swap risk report.
+     */
     function decodePackedRisk(uint256 packedRiskReport) external view returns (SwapV2DecodedRiskReport memory report) {
         return riskPolicy.decode(packedRiskReport);
     }
 
+    /**
+     * @notice Rescues ERC-20 tokens held by the router.
+     * @param token Address of the token to rescue.
+     * @param to Recipient of the rescued tokens.
+     * @param amount Amount of tokens to transfer.
+     */
     function rescueERC20(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) {
             revert ZeroAddress();
@@ -413,6 +637,11 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         IERC20(token).safeTransfer(to, amount);
     }
 
+    /**
+     * @notice Rescues ETH held by the router.
+     * @param to Recipient of the rescued ETH.
+     * @param amount Amount of ETH to transfer.
+     */
     function rescueETH(address payable to, uint256 amount) external onlyOwner {
         if (to == address(0)) {
             revert ZeroAddress();

@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Minimal Uniswap V2 factory interface used by the guarded routers.
+ */
 interface IUniswapV2Factory {
     function getPair(address tokenA, address tokenB) external view returns (address);
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Minimal Uniswap V2 pair interface used by the guarded routers and guards.
+ */
 interface IUniswapV2Pair {
     function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
     function totalSupply() external view returns (uint256);
@@ -16,6 +24,10 @@ interface IUniswapV2Pair {
     function kLast() external view returns (uint256);
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Minimal Uniswap V2 router interface used by the guarded routers.
+ */
 interface IUniswapV2Router {
     function factory() external view returns (address);
     function WETH() external view returns (address);

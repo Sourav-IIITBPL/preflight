@@ -42,6 +42,10 @@ struct ERC4626DecodedRiskReport {
     ERC4626OnChainView onChain;
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Risk policy for evaluating ERC-4626 vault operations into packed reports.
+ */
 contract ERC4626RiskPolicy is BaseRiskPolicy {
     uint8 internal constant FLAG_VAULT_NOT_WHITELISTED = 0;
     uint8 internal constant FLAG_VAULT_ZERO_SUPPLY = 1;
@@ -76,6 +80,13 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         return _evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult));
     }
 
+    /**
+     * @notice Evaluates and immediately decodes an ERC-4626 risk report.
+     * @param offChainData ABI-encoded VaultOffChainResult from CRE simulation.
+     * @param onChainData Vault guard result used for evaluation.
+     * @param operation Vault operation being evaluated.
+     * @return report Decoded ERC-4626 risk report.
+     */
     function previewReport(bytes calldata offChainData, VaultGuardResult calldata onChainData, VaultOpType operation)
         external
         pure
@@ -84,10 +95,27 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         return _decodeReport(_evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult)));
     }
 
+    /**
+     * @notice Decodes a packed ERC-4626 risk report.
+     * @param packedReport Packed risk report value.
+     * @return report Decoded ERC-4626 risk report.
+     */
     function decode(uint256 packedReport) external pure returns (ERC4626DecodedRiskReport memory report) {
         return _decodeReport(packedReport);
     }
 
+    /**
+     * @notice Packs the on-chain ERC-4626 flags and token flags into compact counts and bitmasks.
+     * @param onChainData Vault guard result used for packing.
+     * @param operation Vault operation being evaluated.
+     * @return packedFlags Packed on-chain vault flags.
+     * @return packedTokenFlags Packed token-level flags.
+     * @return criticalCount Total critical findings.
+     * @return warningCount Total warning findings.
+     * @return anyHardBlock True when any hard-block condition is present.
+     * @return tokenCriticalCount Critical findings contributed by token analysis.
+     * @return tokenWarningCount Warning findings contributed by token analysis.
+     */
     function packOnChain(VaultGuardResult memory onChainData, VaultOpType operation)
         external
         pure
@@ -113,6 +141,12 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         );
     }
 
+    /**
+     * @notice Decodes and normalizes ERC-4626 off-chain simulation data.
+     * @param offChainData ABI-encoded VaultOffChainResult from CRE simulation.
+     * @return normalized Normalized off-chain findings.
+     * @return economicData Extracted economic metrics from the off-chain result.
+     */
     function decodeOffChain(bytes calldata offChainData)
         external
         pure

@@ -7,6 +7,7 @@ import {PolicyKind, PolicyRiskCategory} from "./types/OnChainTypes.sol";
 
 /**
  * @title SVGRenderer
+ * @author Sourav-IITBPL
  * @notice Pure renderer/decoder for packed PreFlight policy reports.
  *         It converts a single packed `uint256` into:
  *         1. a user-friendly SVG

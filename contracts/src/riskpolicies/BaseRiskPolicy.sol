@@ -25,6 +25,10 @@ struct EnhancedCoreView {
     bool enhancedDataPresent;
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Shared packing, scoring, and decoding utilities for PreFlight risk policies.
+ */
 abstract contract BaseRiskPolicy {
     error InvalidPackedKind(uint8 expectedKind, uint8 actualKind);
 

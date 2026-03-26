@@ -43,6 +43,10 @@ struct SwapV2DecodedRiskReport {
     SwapV2OnChainView onChain;
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Risk policy for evaluating Uniswap V2-style swap operations into packed reports.
+ */
 contract SwapV2RiskPolicy is BaseRiskPolicy {
     uint8 internal constant FLAG_ROUTER_NOT_TRUSTED = 0;
     uint8 internal constant FLAG_FACTORY_NOT_TRUSTED = 1;
@@ -66,6 +70,7 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
      * @param offChainData  ABI-encoded SwapOffChainResult from CRE simulation.
      * @param onChainData   SwapV2GuardRiskInput (guard check result without token arrays).
      * @param operation     SwapOpType enum value.
+     * @return packedReport 256-bit packed report.
      */
     function evaluate(bytes calldata offChainData, SwapV2GuardResult calldata onChainData, SwapOpType operation)
         external
@@ -75,6 +80,13 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         return _evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult));
     }
 
+    /**
+     * @notice Evaluates and immediately decodes a swap risk report.
+     * @param offChainData ABI-encoded SwapOffChainResult from CRE simulation.
+     * @param onChainData Swap guard result used for evaluation.
+     * @param operation Swap operation being evaluated.
+     * @return report Decoded swap risk report.
+     */
     function previewReport(bytes calldata offChainData, SwapV2GuardResult calldata onChainData, SwapOpType operation)
         external
         pure
@@ -83,10 +95,26 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         return _decodeReport(_evaluatePacked(offChainData, onChainData, operation, _tokenPack(onChainData.tokenResult)));
     }
 
+    /**
+     * @notice Decodes a packed swap risk report.
+     * @param packedReport Packed risk report value.
+     * @return report Decoded swap risk report.
+     */
     function decode(uint256 packedReport) external pure returns (SwapV2DecodedRiskReport memory report) {
         return _decodeReport(packedReport);
     }
 
+    /**
+     * @notice Packs the on-chain swap flags and token flags into compact counts and bitmasks.
+     * @param onChainData Swap guard result used for packing.
+     * @return packedFlags Packed on-chain swap flags.
+     * @return packedTokenFlags Packed token-level flags.
+     * @return criticalCount Total critical findings.
+     * @return warningCount Total warning findings.
+     * @return anyHardBlock True when any hard-block condition is present.
+     * @return tokenCriticalCount Critical findings contributed by token analysis.
+     * @return tokenWarningCount Warning findings contributed by token analysis.
+     */
     function packOnChain(SwapV2GuardResult calldata onChainData)
         external
         pure
@@ -112,6 +140,12 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         );
     }
 
+    /**
+     * @notice Decodes and normalizes swap off-chain simulation data.
+     * @param offChainData ABI-encoded SwapOffChainResult from CRE simulation.
+     * @return normalized Normalized off-chain findings.
+     * @return economicData Extracted economic metrics from the off-chain result.
+     */
     function decodeOffChain(bytes calldata offChainData)
         external
         pure

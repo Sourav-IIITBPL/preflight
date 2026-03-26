@@ -43,6 +43,10 @@ struct LiquidityV2DecodedRiskReport {
     LiquidityV2OnChainView onChain;
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Risk policy for evaluating Uniswap V2-style liquidity operations into packed reports.
+ */
 contract LiquidityV2RiskPolicy is BaseRiskPolicy {
     uint8 internal constant FLAG_ROUTER_NOT_TRUSTED = 0;
     uint8 internal constant FLAG_PAIR_NOT_EXISTS = 1;
@@ -66,6 +70,7 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
      * @param offChainData  ABI-encoded LiquidityOffChainResult from CRE simulation.
      * @param onChainData   Guard check result (flag booleans).
      * @param operation     LiquidityOpType: ADD | ADD_ETH | REMOVE | REMOVE_ETH.
+     * @return packedReport 256-bit packed report.
      */
     function evaluate(bytes calldata offChainData, LiquidityV2GuardResult memory onChainData, LiquidityOpType operation)
         external
@@ -77,6 +82,13 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         );
     }
 
+    /**
+     * @notice Evaluates and immediately decodes a liquidity risk report.
+     * @param offChainData ABI-encoded LiquidityOffChainResult from CRE simulation.
+     * @param onChainData Liquidity guard result used for evaluation.
+     * @param operation Liquidity operation being evaluated.
+     * @return report Decoded liquidity risk report.
+     */
     function previewReport(
         bytes calldata offChainData,
         LiquidityV2GuardResult calldata onChainData,
@@ -89,10 +101,26 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         );
     }
 
+    /**
+     * @notice Decodes a packed liquidity risk report.
+     * @param packedReport Packed risk report value.
+     * @return report Decoded liquidity risk report.
+     */
     function decode(uint256 packedReport) external pure returns (LiquidityV2DecodedRiskReport memory report) {
         return _decodeReport(packedReport);
     }
 
+    /**
+     * @notice Packs the on-chain liquidity flags and token flags into compact counts and bitmasks.
+     * @param onChainData Liquidity guard result used for packing.
+     * @return packedFlags Packed on-chain liquidity flags.
+     * @return packedTokenFlags Packed token-level flags.
+     * @return criticalCount Total critical findings.
+     * @return warningCount Total warning findings.
+     * @return anyHardBlock True when any hard-block condition is present.
+     * @return tokenCriticalCount Critical findings contributed by token analysis.
+     * @return tokenWarningCount Warning findings contributed by token analysis.
+     */
     function packOnChain(LiquidityV2GuardResult memory onChainData)
         external
         pure
@@ -120,6 +148,12 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         );
     }
 
+    /**
+     * @notice Decodes and normalizes liquidity off-chain simulation data.
+     * @param offChainData ABI-encoded LiquidityOffChainResult from CRE simulation.
+     * @return normalized Normalized off-chain findings.
+     * @return economicData Extracted economic metrics from the off-chain result.
+     */
     function decodeOffChain(bytes calldata offChainData)
         external
         pure
