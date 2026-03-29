@@ -9,6 +9,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import {ITokenGuard, TokenGuardResult} from "./interfaces/ITokenGuard.sol";
+import {VaultOpType} from "../types/OffChainTypes.sol";
 
 /**
  * @title  ERC4626VaultGuard
@@ -45,6 +46,12 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
         TokenGuardResult tokenResult;
     }
 
+    struct StoredUserCheck {
+        uint48 packedResult;
+        uint256 previewShares;
+        uint256 previewAssets;
+    }
+
     // CONSTANTS //
 
     uint256 public constant MAX_BPS = 10_000;
@@ -60,7 +67,7 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
     // STORAGE VARIABLES //
 
     ITokenGuard public tokenGuard;
-    mapping(address => mapping(address => bytes)) public lastCheckEncoded;
+    mapping(address => mapping(address => StoredUserCheck)) public lastCheckPacked;
     mapping(address => mapping(address => uint256)) public lastCheckBlock;
     mapping(address => bool) public isVaultWhitelisted;
     mapping(address => uint256) public vaultIndex;
@@ -148,12 +155,10 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
         view
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets, uint256 blockNumber)
     {
-        bytes memory encoded = lastCheckEncoded[vault][user];
-        require(encoded.length > 0, "NO_CHECK_STORED");
-        (uint48 packedResult, uint256 shares, uint256 assets) = abi.decode(encoded, (uint48, uint256, uint256));
-        result = _unpacked(packedResult);
-        previewShares = shares;
-        previewAssets = assets;
+        StoredUserCheck memory userCheck = lastCheckPacked[vault][user];
+        result = _unpacked(userCheck.packedResult);
+        previewShares = userCheck.previewShares;
+        previewAssets = userCheck.previewAssets;
         blockNumber = lastCheckBlock[vault][user];
     }
 
@@ -168,12 +173,12 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
     /**
      * @notice Standalone view-style check . Uses msg.sender for cap checks.
      */
-    function checkVault(address vault, uint256 amount, bool isDeposit)
+    function checkVault(address vault, uint256 amount, VaultOpType opType)
         external
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
     {
         emit VaultCheckPerformed(vault, msg.sender);
-        return _checkVault(vault, amount, isDeposit, msg.sender);
+        return _checkVault(vault, amount, opType, msg.sender);
     }
 
     // EXTERNAL FUNCTIONS (STATE-CHANGING) //
@@ -182,24 +187,26 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
      *         Must be called in the same block as guardedDeposit / guardedWithdraw.
      *
      */
-    function storeCheck(address vault, address user, uint256 amount, bool isDeposit)
+    function storeCheck(address vault, address user, uint256 amount, VaultOpType opType)
         external
         nonReentrant
         onlyAuthorizedRouter
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
     {
         (VaultGuardResult memory guardResult, uint256 pShares, uint256 pAssets) =
-            _checkVault(vault, amount, isDeposit, user);
+            _checkVault(vault, amount, opType, user);
 
-        lastCheckEncoded[vault][user] = abi.encode(_packed(guardResult), pShares, pAssets);
+        lastCheckPacked[vault][user] =
+            StoredUserCheck({packedResult: _packed(guardResult), previewShares: pShares, previewAssets: pAssets});
+
         lastCheckBlock[vault][user] = block.number;
 
         emit CheckStored(vault, user, block.number);
         return (result, pShares, pAssets);
     }
 
-    function validate(address vault, address user, uint256 amount, bool isDeposit) external view {
-        _validate(vault, user, amount, isDeposit);
+    function validate(address vault, address user, uint256 amount, VaultOpType opType) external view {
+        _validate(vault, user, amount, opType);
     }
 
     // INTERNAL FUNCTIONS
@@ -209,83 +216,81 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
      * @dev This is called by both the external checkVault (for off-chain use) and the internal storeCheck (before encoding).
      * @param ERC4626vault     ERC4626 vault address
      * @param amount    Assets (for deposit) or shares (for redeem)
-     * @param isDeposit true = deposit flow; false = redeem flow
+     * @param opType    Type of operation (deposit, mint, redeem, withdraw)
      * @param user      Address performing the operation (used for cap checks)
      */
-    function _checkVault(address ERC4626vault, uint256 amount, bool isDeposit, address user)
+    function _checkVault(address ERC4626vault, uint256 amount, VaultOpType opType, address user)
         internal
         view
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
     {
-        IERC4626 vault = IERC4626(ERC4626vault);
-        address asset = vault.asset();
+        {
+            IERC4626 vault = IERC4626(ERC4626vault);
+            address asset = vault.asset();
 
-        result.tokenResult = tokenGuard.checkToken(asset);
+            result.tokenResult = tokenGuard.checkToken(asset);
 
-        uint256 totalAssets = vault.totalAssets();
-        uint256 totalSupply = vault.totalSupply();
+            uint256 totalAssets = vault.totalAssets();
+            uint256 totalSupply = vault.totalSupply();
 
-        if (!isVaultWhitelisted[ERC4626vault]) {
-            result.VAULT_NOT_WHITELISTED = true;
-        }
+            if (!isVaultWhitelisted[ERC4626vault]) {
+                result.VAULT_NOT_WHITELISTED = true;
+            }
 
-        if (totalSupply == 0) {
-            result.VAULT_ZERO_SUPPLY = true;
-            if (totalAssets > DONATION_THRESHOLD) {
-                result.DONATION_ATTACK = true;
+            if (totalSupply == 0) {
+                result.VAULT_ZERO_SUPPLY = true;
+                if (totalAssets > DONATION_THRESHOLD) {
+                    result.DONATION_ATTACK = true;
+                }
+            }
+
+            // Balance mismatch (undercollateralisation
+            // The risk is realBalance < totalAssets: vault is promising more than it holds.
+            uint256 realBalance = IERC20(asset).balanceOf(ERC4626vault);
+            if (realBalance < totalAssets) {
+                result.VAULT_BALANCE_MISMATCH = true;
+            }
+
+            // Even with supply > 0, a manipulator can push assets-per-share very high,
+            // causing future depositors to receive rounding-down to 0 shares.
+            if (totalSupply > 0) {
+                uint8 assetDec = _safeDecimals(asset);
+                uint8 vaultDec = _safeDecimals(ERC4626vault);
+                uint256 normAssets = _normalize(totalAssets, assetDec);
+                uint256 normSupply = _normalize(totalSupply, vaultDec);
+                // assetsPerShare in 1e18
+                uint256 assetsPerShare = (normAssets * 1e18) / normSupply;
+                // Ideally 1:1 in normalised terms.
+                // Flag if ratio > INFLATION_FACTOR × expected.
+                if (assetsPerShare > INFLATION_FACTOR * 1e18) {
+                    result.SHARE_INFLATION_RISK = true;
+                }
             }
         }
 
-        // Balance mismatch (undercollateralisation
-        // The risk is realBalance < totalAssets: vault is promising more than it holds.
-        uint256 realBalance = IERC20(asset).balanceOf(ERC4626vault);
-        if (realBalance < totalAssets) {
-            result.VAULT_BALANCE_MISMATCH = true;
-        }
-
-        // Even with supply > 0, a manipulator can push assets-per-share very high,
-        // causing future depositors to receive rounding-down to 0 shares.
-        if (totalSupply > 0) {
-            uint8 assetDec = _safeDecimals(asset);
-            uint8 vaultDec = _safeDecimals(ERC4626vault);
-            uint256 normAssets = _normalize(totalAssets, assetDec);
-            uint256 normSupply = _normalize(totalSupply, vaultDec);
-            // assetsPerShare in 1e18
-            uint256 assetsPerShare = (normAssets * 1e18) / normSupply;
-            // Ideally 1:1 in normalised terms.
-            // Flag if ratio > INFLATION_FACTOR × expected.
-            if (assetsPerShare > INFLATION_FACTOR * 1e18) {
-                result.SHARE_INFLATION_RISK = true;
-            }
-        }
-
-        if (totalSupply > 0 && totalAssets > 0) {
-            uint8 assetDec = _safeDecimals(asset);
-            uint8 vaultDec = _safeDecimals(ERC4626vault);
-            uint256 normAssets = _normalize(totalAssets, assetDec);
-            uint256 normSupply = _normalize(totalSupply, vaultDec);
-            // Vault-level exchange rate (normalised, 1e18 precision)
-            uint256 vaultRate = (normAssets * 1e18) / normSupply;
-
-            if (isDeposit) {
-                try vault.maxDeposit(user) returns (uint256 cap) {
+        {
+            if (IERC4626(ERC4626vault).totalSupply() > 0 && IERC4626(ERC4626vault).totalAssets() > 0) {
+            if (opType == VaultOpType.DEPOSIT) {
+                try IERC4626(ERC4626vault).maxDeposit(user) returns (uint256 cap) {
                     if (amount > cap) result.EXCEEDS_MAX_DEPOSIT = true;
                 } catch {}
-
-                try vault.previewDeposit(amount) returns (uint256 s) {
+                try IERC4626(ERC4626vault).previewDeposit(amount) returns (uint256 s) {
                     previewShares = s;
                 } catch {
                     result.PREVIEW_REVERT = true;
                     return (result, 0, 0);
                 }
-
                 if (previewShares == 0) result.ZERO_SHARES_OUT = true;
                 if (previewShares < MIN_SHARES) result.DUST_SHARES = true;
 
                 if (previewShares > 0) {
+                    address asset = IERC4626(ERC4626vault).asset();
+                    uint8 assetDec = _safeDecimals(asset);
+                    uint8 vaultDec = _safeDecimals(ERC4626vault);
+                    uint256 vaultRate = (_normalize(IERC4626(ERC4626vault).totalAssets(), assetDec) * 1e18)
+                        / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
                     uint256 normShares = _normalize(previewShares, vaultDec);
-                    uint256 normAmount = _normalize(amount, assetDec);
-                    uint256 opRate = (normAmount * 1e18) / normShares;
+                    uint256 opRate = (_normalize(amount, assetDec) * 1e18) / normShares;
                     if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
                         result.EXCHANGE_RATE_ANOMALY = true;
                     }
@@ -293,7 +298,7 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
 
                 // Cross-check previewDeposit vs convertToShares
                 // They must agree within PREVIEW_TOLERANCE_BPS.
-                try vault.convertToShares(amount) returns (uint256 converted) {
+                try IERC4626(ERC4626vault).convertToShares(amount) returns (uint256 converted) {
                     if (
                         previewShares > 0 && converted > 0
                             && _bpsDelta(previewShares, converted) > PREVIEW_TOLERANCE_BPS
@@ -301,22 +306,62 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
                         result.PREVIEW_CONVERT_MISMATCH = true;
                     }
                 } catch {}
-            } else {
-                try vault.maxRedeem(user) returns (uint256 cap) {
+            } else if (opType == VaultOpType.MINT) {
+                try IERC4626(ERC4626vault).maxMint(user) returns (uint256 cap) {
+                    if (amount > cap) result.EXCEEDS_MAX_DEPOSIT = true;
+                } catch {}
+                try IERC4626(ERC4626vault).previewMint(amount) returns (uint256 s) {
+                    previewAssets = s;
+                } catch {
+                    result.PREVIEW_REVERT = true;
+                    return (result, 0, 0);
+                }
+                if (previewAssets == 0) result.ZERO_ASSETS_OUT = true;
+                if (previewAssets < MIN_ASSETS) result.DUST_ASSETS = true;
+
+                if (previewAssets > 0) {
+                    address asset = IERC4626(ERC4626vault).asset();
+                    uint8 assetDec = _safeDecimals(asset);
+                    uint8 vaultDec = _safeDecimals(ERC4626vault);
+                    uint256 vaultRate = (_normalize(IERC4626(ERC4626vault).totalAssets(), assetDec) * 1e18)
+                        / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
+                    uint256 normAssetOuts = _normalize(previewAssets, assetDec);
+                    uint256 normShares = _normalize(amount, vaultDec);
+                    uint256 opRate = (normAssetOuts * 1e18) / normShares;
+                    if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
+                        result.EXCHANGE_RATE_ANOMALY = true;
+                    }
+                }
+
+                // Cross-check previewMint vs convertToAssets
+                // They must agree within PREVIEW_TOLERANCE_BPS.
+                try IERC4626(ERC4626vault).convertToAssets(amount) returns (uint256 converted) {
+                    if (
+                        previewAssets > 0 && converted > 0
+                            && _bpsDelta(previewAssets, converted) > PREVIEW_TOLERANCE_BPS
+                    ) {
+                        result.PREVIEW_CONVERT_MISMATCH = true;
+                    }
+                } catch {}
+            } else if (opType == VaultOpType.REDEEM) {
+                try IERC4626(ERC4626vault).maxRedeem(user) returns (uint256 cap) {
                     if (amount > cap) result.EXCEEDS_MAX_REDEEM = true;
                 } catch {}
-
-                try vault.previewRedeem(amount) returns (uint256 a) {
+                try IERC4626(ERC4626vault).previewRedeem(amount) returns (uint256 a) {
                     previewAssets = a;
                 } catch {
                     result.PREVIEW_REVERT = true;
                     return (result, 0, 0);
                 }
-
                 if (previewAssets == 0) result.ZERO_ASSETS_OUT = true;
                 if (previewAssets < MIN_ASSETS) result.DUST_ASSETS = true;
 
                 if (previewAssets > 0) {
+                    address asset = IERC4626(ERC4626vault).asset();
+                    uint8 assetDec = _safeDecimals(asset);
+                    uint8 vaultDec = _safeDecimals(ERC4626vault);
+                    uint256 vaultRate = (_normalize(IERC4626(ERC4626vault).totalAssets(), assetDec) * 1e18)
+                        / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
                     uint256 normAssetsOut = _normalize(previewAssets, assetDec);
                     uint256 normShares = _normalize(amount, vaultDec);
                     uint256 opRate = (normAssetsOut * 1e18) / normShares;
@@ -326,7 +371,7 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
                 }
 
                 // Cross-check previewRedeem vs convertToAssets
-                try vault.convertToAssets(amount) returns (uint256 converted) {
+                try IERC4626(ERC4626vault).convertToAssets(amount) returns (uint256 converted) {
                     if (
                         previewAssets > 0 && converted > 0
                             && _bpsDelta(previewAssets, converted) > PREVIEW_TOLERANCE_BPS
@@ -334,17 +379,57 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
                         result.PREVIEW_CONVERT_MISMATCH = true;
                     }
                 } catch {}
+            } else if (opType == VaultOpType.WITHDRAW) {
+                try IERC4626(ERC4626vault).maxWithdraw(user) returns (uint256 cap) {
+                    if (amount > cap) result.EXCEEDS_MAX_REDEEM = true;
+                } catch {}
+                try IERC4626(ERC4626vault).previewWithdraw(amount) returns (uint256 a) {
+                    previewShares = a;
+                } catch {
+                    result.PREVIEW_REVERT = true;
+                    return (result, 0, 0);
+                }
+                if (previewShares == 0) result.ZERO_SHARES_OUT = true;
+                if (previewShares < MIN_SHARES) result.DUST_SHARES = true;
+
+                if (previewShares > 0) {
+                    address asset = IERC4626(ERC4626vault).asset();
+                    uint8 assetDec = _safeDecimals(asset);
+                    uint8 vaultDec = _safeDecimals(ERC4626vault);
+                    uint256 vaultRate = (_normalize(IERC4626(ERC4626vault).totalAssets(), assetDec) * 1e18)
+                        / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
+                    uint256 normShares = _normalize(previewShares, vaultDec);
+                    uint256 opRate = (_normalize(amount, assetDec) * 1e18) / normShares;
+                    if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
+                        result.EXCHANGE_RATE_ANOMALY = true;
+                    }
+                }
+
+                // Cross-check previewWithdraw vs convertToShares
+                try IERC4626(ERC4626vault).convertToShares(amount) returns (uint256 converted) {
+                    if (
+                        previewShares > 0 && converted > 0
+                            && _bpsDelta(previewShares, converted) > PREVIEW_TOLERANCE_BPS
+                    ) {
+                        result.PREVIEW_CONVERT_MISMATCH = true;
+                    }
+                } catch {}
             }
+        }
         }
     }
 
-    function _validate(address vault, address user, uint256 amount, bool isDeposit) internal view {
+    function _validate(address vault, address user, uint256 amount, VaultOpType opType) internal view {
         require(lastCheckBlock[vault][user] == block.number, "STALE_CHECK");
 
-        (VaultGuardResult memory result, uint256 pShares, uint256 pAssets) = _checkVault(vault, amount, isDeposit, user);
+        (VaultGuardResult memory result, uint256 pShares, uint256 pAssets) = _checkVault(vault, amount, opType, user);
 
-        bytes32 currentFingerprint = keccak256(abi.encode(_packed(result), pShares, pAssets));
-        bytes32 storedFingerprint = keccak256(lastCheckEncoded[vault][user]);
+        StoredUserCheck memory currentCheck =
+            StoredUserCheck({packedResult: _packed(result), previewShares: pShares, previewAssets: pAssets});
+        StoredUserCheck memory storedCheck = lastCheckPacked[vault][user];
+
+        bytes32 currentFingerprint = keccak256(abi.encode(currentCheck));
+        bytes32 storedFingerprint = keccak256(abi.encode(storedCheck));
 
         require(currentFingerprint == storedFingerprint, "VAULT_STATE_CHANGED");
     }

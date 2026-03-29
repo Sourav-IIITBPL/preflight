@@ -196,8 +196,10 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
     }
 
     function _decodeReport(uint256 packedReport) internal pure returns (LiquidityV2DecodedRiskReport memory report) {
-        (PolicyCoreView memory core, PolicyOffChainView memory offChain, PolicyTokenFlagsView memory tokenRisk) =
-            _decodeBase(packedReport);
+        PolicyCoreView memory core;
+        PolicyOffChainView memory offChain;
+        PolicyTokenFlagsView memory tokenRisk;
+        (core, offChain, tokenRisk) = _decodeBase(packedReport);
         _assertKind(core.kind, PolicyKind.LIQUIDITY_V2);
 
         report.core = core;

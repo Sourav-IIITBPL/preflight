@@ -9,21 +9,9 @@ import {ReentrancyGuard} from "../../../lib/openzeppelin-contracts/contracts/sec
 import {ISwapV2Guard} from "../interfaces/IGuards.sol";
 import {IUniswapV2Router} from "../interfaces/IUniswapV2Interface.sol";
 import {SwapV2GuardResult} from "../../types/OnChainTypes.sol";
-import {SwapV2RiskPolicy, SwapV2DecodedRiskReport} from "../../riskpolicies/SwapV2RiskPolicy.sol";
+import {ISwapV2RiskPolicy, IRiskReportNFT} from "../interfaces/IRiskPolicy.sol";
+import {SwapV2DecodedRiskReport} from "../../riskpolicies/SwapV2RiskPolicy.sol";
 import {SwapOpType} from "../../types/OffChainTypes.sol";
-
-/**
- * @author Sourav-IITBPL
- * @notice Minimal interface for minting packed risk report NFTs.
- */
-interface IRiskReportNFT {
-    /**
-     * @notice Mints a risk report NFT for a packed report payload.
-     * @param packedRiskReport Packed risk report value.
-     * @return tokenId Minted NFT identifier.
-     */
-    function mint(uint256 packedRiskReport) external returns (uint256 tokenId);
-}
 
 /**
  * @author Sourav-IITBPL
@@ -39,7 +27,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
     error InvalidEthValue();
 
     ISwapV2Guard public swapGuard;
-    SwapV2RiskPolicy public riskPolicy;
+    ISwapV2RiskPolicy public riskPolicy;
     IRiskReportNFT public riskReportNFT;
 
     event SwapGuardUpdated(address indexed newGuard);
@@ -74,7 +62,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         }
 
         swapGuard = ISwapV2Guard(swapGuard_);
-        riskPolicy = SwapV2RiskPolicy(riskPolicy_);
+        riskPolicy = ISwapV2RiskPolicy(riskPolicy_);
         riskReportNFT = IRiskReportNFT(riskReportNFT_);
     }
 
@@ -101,7 +89,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         if (newRiskPolicy == address(0)) {
             revert ZeroAddress();
         }
-        riskPolicy = SwapV2RiskPolicy(newRiskPolicy);
+        riskPolicy = ISwapV2RiskPolicy(newRiskPolicy);
         emit RiskPolicyUpdated(newRiskPolicy);
     }
 
@@ -122,241 +110,38 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param ammRouter Address of the AMM router.
      * @param path Swap path.
      * @param amountIn Exact token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return result Guard result for the swap.
-     * @return packedRiskReport Packed risk report for the swap.
-     * @return report Decoded risk report for the swap.
      */
-    function previewGuardedSwapExactTokensForTokens(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountIn,
-        bytes calldata offChainData
-    )
+    function guardedPreview(address ammRouter, address[] calldata path, bool isExactTokenIn, uint256 amountIn)
         external
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
+        returns (SwapV2GuardResult memory result, uint256 amountOut)
     {
-        return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
-    }
-
-    /**
-     * @notice Previews a guarded exact-output token-to-token swap.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountInMax Maximum token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return result Guard result for the swap.
-     * @return packedRiskReport Packed risk report for the swap.
-     * @return report Decoded risk report for the swap.
-     */
-    function previewGuardedSwapTokensForExactTokens(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountInMax,
-        bytes calldata offChainData
-    )
-        external
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
-    {
-        return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
-    }
-
-    /**
-     * @notice Previews a guarded exact-input ETH-to-token swap.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountIn Exact ETH input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return result Guard result for the swap.
-     * @return packedRiskReport Packed risk report for the swap.
-     * @return report Decoded risk report for the swap.
-     */
-    function previewGuardedSwapExactETHForTokens(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountIn,
-        bytes calldata offChainData
-    )
-        external
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
-    {
-        _requireStartsWithWeth(ammRouter, path);
-        return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_ETH_IN);
-    }
-
-    /**
-     * @notice Previews a guarded exact-output ETH-to-token swap.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountInMax Maximum ETH input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return result Guard result for the swap.
-     * @return packedRiskReport Packed risk report for the swap.
-     * @return report Decoded risk report for the swap.
-     */
-    function previewGuardedSwapETHForExactTokens(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountInMax,
-        bytes calldata offChainData
-    )
-        external
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
-    {
-        _requireStartsWithWeth(ammRouter, path);
-        return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_ETH_OUT);
-    }
-
-    /**
-     * @notice Previews a guarded exact-input token-to-ETH swap.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountIn Exact token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return result Guard result for the swap.
-     * @return packedRiskReport Packed risk report for the swap.
-     * @return report Decoded risk report for the swap.
-     */
-    function previewGuardedSwapExactTokensForETH(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountIn,
-        bytes calldata offChainData
-    )
-        external
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
-    {
-        _requireEndsWithWeth(ammRouter, path);
-        return _previewSwap(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
-    }
-
-    /**
-     * @notice Previews a guarded exact-output token-to-ETH swap.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountInMax Maximum token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return result Guard result for the swap.
-     * @return packedRiskReport Packed risk report for the swap.
-     * @return report Decoded risk report for the swap.
-     */
-    function previewGuardedSwapTokensForExactETH(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountInMax,
-        bytes calldata offChainData
-    )
-        external
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
-    {
-        _requireEndsWithWeth(ammRouter, path);
-        return _previewSwap(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
+        uint256[] memory amountsOut;
+        (result, amountsOut) = swapGuard.swapCheckV2(ammRouter, path, amountIn, isExactTokenIn);
+        if (isExactTokenIn) {
+            amountOut = amountsOut[amountsOut.length - 1];
+        } else {
+            amountOut = amountsOut[0];
+        }
     }
 
     /**
      * @notice Stores and mints the risk report for an exact-input token-to-token swap check.
      * @param ammRouter Address of the AMM router.
      * @param path Swap path.
-     * @param amountIn Exact token input amount.
+     * @param amount Amount used for the swap check.
+     * @param operationType Swap operation type.
      * @param offChainData ABI-encoded off-chain simulation data.
      * @return packedRiskReport Packed risk report for the swap.
      */
-    function storeAndMintSwapExactTokensForTokensCheck(
+    function storeAndMintSwapCheck(
         address ammRouter,
         address[] calldata path,
-        uint256 amountIn,
+        uint256 amount,
+        SwapOpType operationType,
         bytes calldata offChainData
     ) external nonReentrant returns (uint256 packedRiskReport) {
-        return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
-    }
-
-    /**
-     * @notice Stores and mints the risk report for an exact-output token-to-token swap check.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountInMax Maximum token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the swap.
-     */
-    function storeAndMintSwapTokensForExactTokensCheck(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountInMax,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
-    }
-
-    /**
-     * @notice Stores and mints the risk report for an exact-input ETH-to-token swap check.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountIn Exact ETH input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the swap.
-     */
-    function storeAndMintSwapExactETHForTokensCheck(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountIn,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        _requireStartsWithWeth(ammRouter, path);
-        return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_ETH_IN);
-    }
-
-    /**
-     * @notice Stores and mints the risk report for an exact-output ETH-to-token swap check.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountInMax Maximum ETH input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the swap.
-     */
-    function storeAndMintSwapETHForExactTokensCheck(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountInMax,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        _requireStartsWithWeth(ammRouter, path);
-        return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_ETH_OUT);
-    }
-
-    /**
-     * @notice Stores and mints the risk report for an exact-input token-to-ETH swap check.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountIn Exact token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the swap.
-     */
-    function storeAndMintSwapExactTokensForETHCheck(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountIn,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        _requireEndsWithWeth(ammRouter, path);
-        return _storeAndMintSwapCheck(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
-    }
-
-    /**
-     * @notice Stores and mints the risk report for an exact-output token-to-ETH swap check.
-     * @param ammRouter Address of the AMM router.
-     * @param path Swap path.
-     * @param amountInMax Maximum token input amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the swap.
-     */
-    function storeAndMintSwapTokensForExactETHCheck(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountInMax,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        _requireEndsWithWeth(ammRouter, path);
-        return _storeAndMintSwapCheck(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
+        return _storeAndMintSwapCheck(ammRouter, path, amount, offChainData, operationType);
     }
 
     /**
@@ -367,7 +152,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param path Swap path.
      * @param receiver Recipient of the output tokens.
      * @param deadline Swap deadline timestamp.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return amounts Router output amounts per hop.
      * @return packedRiskReport Packed risk report for the swap.
      */
@@ -377,18 +161,19 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 amountOutMin,
         address[] calldata path,
         address receiver,
-        uint256 deadline,
-        bytes calldata offChainData
+        uint256 deadline
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
         _validateReceiver(receiver);
 
-        swapGuard.validateSwapCheck(ammRouter, path, amountIn, msg.sender);
-        packedRiskReport = _evaluateSwapRisk(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_IN);
+        swapGuard.validateSwapCheck(ammRouter, path, amountIn, true, msg.sender);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(path[0]).forceApprove(ammRouter, amountIn);
         amounts = IUniswapV2Router(ammRouter).swapExactTokensForTokens(amountIn, amountOutMin, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
+        if (amountOutMin > amounts[amounts.length - 1]) {
+            revert("INSUFFICIENT_OUTPUT_AMOUNT");
+        }
 
         emit GuardedSwapExecuted(
             msg.sender, ammRouter, receiver, SwapOpType.EXACT_TOKENS_IN, keccak256(abi.encode(path)), packedRiskReport
@@ -404,7 +189,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param receiver Recipient of the output tokens.
      * @param refundRecipient Recipient of any unused input tokens.
      * @param deadline Swap deadline timestamp.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return amounts Router output amounts per hop.
      * @return packedRiskReport Packed risk report for the swap.
      */
@@ -415,14 +199,12 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         address[] calldata path,
         address receiver,
         address refundRecipient,
-        uint256 deadline,
-        bytes calldata offChainData
+        uint256 deadline
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
 
-        swapGuard.validateSwapCheck(ammRouter, path, amountInMax, msg.sender);
-        packedRiskReport = _evaluateSwapRisk(ammRouter, path, amountInMax, offChainData, SwapOpType.EXACT_TOKENS_OUT);
+        swapGuard.validateSwapCheck(ammRouter, path, amountInMax, false, msg.sender);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountInMax);
         IERC20(path[0]).forceApprove(ammRouter, amountInMax);
@@ -445,7 +227,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param path Swap path.
      * @param receiver Recipient of the output tokens.
      * @param deadline Swap deadline timestamp.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return amounts Router output amounts per hop.
      * @return packedRiskReport Packed risk report for the swap.
      */
@@ -454,8 +235,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 amountOutMin,
         address[] calldata path,
         address receiver,
-        uint256 deadline,
-        bytes calldata offChainData
+        uint256 deadline
     ) external payable nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
         _validateReceiver(receiver);
         _requireStartsWithWeth(ammRouter, path);
@@ -464,8 +244,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
             revert InvalidEthValue();
         }
 
-        swapGuard.validateSwapCheck(ammRouter, path, msg.value, msg.sender);
-        packedRiskReport = _evaluateSwapRisk(ammRouter, path, msg.value, offChainData, SwapOpType.EXACT_ETH_IN);
+        swapGuard.validateSwapCheck(ammRouter, path, msg.value, true, msg.sender);
 
         amounts =
             IUniswapV2Router(ammRouter).swapExactETHForTokens{value: msg.value}(amountOutMin, path, receiver, deadline);
@@ -483,7 +262,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param receiver Recipient of the output tokens.
      * @param refundRecipient Recipient of refunded ETH.
      * @param deadline Swap deadline timestamp.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return amounts Router output amounts per hop.
      * @return packedRiskReport Packed risk report for the swap.
      */
@@ -493,8 +271,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         address[] calldata path,
         address receiver,
         address refundRecipient,
-        uint256 deadline,
-        bytes calldata offChainData
+        uint256 deadline
     ) external payable nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
@@ -506,8 +283,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
 
         uint256 balanceBefore = address(this).balance - msg.value;
 
-        swapGuard.validateSwapCheck(ammRouter, path, msg.value, msg.sender);
-        packedRiskReport = _evaluateSwapRisk(ammRouter, path, msg.value, offChainData, SwapOpType.EXACT_ETH_OUT);
+        swapGuard.validateSwapCheck(ammRouter, path, msg.value, false, msg.sender);
 
         amounts =
             IUniswapV2Router(ammRouter).swapETHForExactTokens{value: msg.value}(amountOut, path, receiver, deadline);
@@ -531,7 +307,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param path Swap path.
      * @param receiver Recipient of the ETH output.
      * @param deadline Swap deadline timestamp.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return amounts Router output amounts per hop.
      * @return packedRiskReport Packed risk report for the swap.
      */
@@ -541,19 +316,21 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 amountOutMin,
         address[] calldata path,
         address receiver,
-        uint256 deadline,
-        bytes calldata offChainData
+        uint256 deadline
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
         _validateReceiver(receiver);
         _requireEndsWithWeth(ammRouter, path);
 
-        swapGuard.validateSwapCheck(ammRouter, path, amountIn, msg.sender);
-        packedRiskReport = _evaluateSwapRisk(ammRouter, path, amountIn, offChainData, SwapOpType.EXACT_TOKENS_FOR_ETH);
+        swapGuard.validateSwapCheck(ammRouter, path, amountIn, true, msg.sender);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(path[0]).forceApprove(ammRouter, amountIn);
         amounts = IUniswapV2Router(ammRouter).swapExactTokensForETH(amountIn, amountOutMin, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
+
+        if (amountOutMin > amounts[amounts.length - 1]) {
+            revert("INSUFFICIENT_OUTPUT_AMOUNT");
+        }
 
         emit GuardedSwapExecuted(
             msg.sender,
@@ -574,7 +351,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
      * @param receiver Recipient of the ETH output.
      * @param refundRecipient Recipient of any unused input tokens.
      * @param deadline Swap deadline timestamp.
-     * @param offChainData ABI-encoded off-chain simulation data.
      * @return amounts Router output amounts per hop.
      * @return packedRiskReport Packed risk report for the swap.
      */
@@ -585,16 +361,13 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         address[] calldata path,
         address receiver,
         address refundRecipient,
-        uint256 deadline,
-        bytes calldata offChainData
+        uint256 deadline
     ) external nonReentrant returns (uint256[] memory amounts, uint256 packedRiskReport) {
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
         _requireEndsWithWeth(ammRouter, path);
 
-        swapGuard.validateSwapCheck(ammRouter, path, amountInMax, msg.sender);
-        packedRiskReport =
-            _evaluateSwapRisk(ammRouter, path, amountInMax, offChainData, SwapOpType.TOKENS_FOR_EXACT_ETH);
+        swapGuard.validateSwapCheck(ammRouter, path, amountInMax, false, msg.sender);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountInMax);
         IERC20(path[0]).forceApprove(ammRouter, amountInMax);
@@ -650,22 +423,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         require(success, "ETH_RESCUE_FAILED");
     }
 
-    function _previewSwap(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountForCheck,
-        bytes calldata offChainData,
-        SwapOpType operation
-    )
-        internal
-        returns (SwapV2GuardResult memory result, uint256 packedRiskReport, SwapV2DecodedRiskReport memory report)
-    {
-        _validatePath(path);
-        result = swapGuard.swapCheckV2(ammRouter, path, amountForCheck);
-        packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
-        report = riskPolicy.decode(packedRiskReport);
-    }
-
     function _storeAndMintSwapCheck(
         address ammRouter,
         address[] calldata path,
@@ -675,7 +432,8 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
     ) internal returns (uint256 packedRiskReport) {
         _validatePath(path);
 
-        SwapV2GuardResult memory result = swapGuard.storeSwapCheck(ammRouter, path, amountForCheck, msg.sender);
+        SwapV2GuardResult memory result =
+            swapGuard.storeSwapCheck(ammRouter, path, amountForCheck, _isExactTokenIn(operation), msg.sender);
         packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
         riskReportNFT.mint(packedRiskReport);
 
@@ -684,16 +442,9 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         );
     }
 
-    function _evaluateSwapRisk(
-        address ammRouter,
-        address[] calldata path,
-        uint256 amountForCheck,
-        bytes calldata offChainData,
-        SwapOpType operation
-    ) internal returns (uint256 packedRiskReport) {
-        _validatePath(path);
-        SwapV2GuardResult memory result = swapGuard.swapCheckV2(ammRouter, path, amountForCheck);
-        packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
+    function _isExactTokenIn(SwapOpType operation) internal pure returns (bool) {
+        return operation == SwapOpType.EXACT_TOKENS_IN || operation == SwapOpType.EXACT_ETH_IN
+            || operation == SwapOpType.EXACT_TOKENS_FOR_ETH;
     }
 
     function _validatePath(address[] calldata path) internal pure {

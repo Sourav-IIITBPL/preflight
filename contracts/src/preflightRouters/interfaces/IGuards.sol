@@ -7,6 +7,7 @@ import {
     LiquidityV2GuardResult,
     LiquidityOperationType
 } from "../../types/OnChainTypes.sol";
+import {VaultOpType} from "../../types/OffChainTypes.sol";
 
 /**
  * @author Sourav-IITBPL
@@ -14,15 +15,15 @@ import {
  */
 interface IERC4626VaultGuard {
     /**
-     * @notice Runs a vault safety check for a deposit or redeem flow.
+     * @notice Runs a vault safety check for an ERC-4626 operation.
      * @param vault Address of the vault to inspect.
      * @param amount Assets or shares to evaluate.
-     * @param isDeposit True for deposit flow, false for redeem flow.
+     * @param opType Type of ERC-4626 operation being evaluated.
      * @return result Guard result for the requested operation.
      * @return previewShares Previewed shares from the guard.
      * @return previewAssets Previewed assets from the guard.
      */
-    function checkVault(address vault, uint256 amount, bool isDeposit)
+    function checkVault(address vault, uint256 amount, VaultOpType opType)
         external
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets);
 
@@ -31,12 +32,12 @@ interface IERC4626VaultGuard {
      * @param vault Address of the vault to inspect.
      * @param user Address whose check is being stored.
      * @param amount Assets or shares to evaluate.
-     * @param isDeposit True for deposit flow, false for redeem flow.
+     * @param opType Type of ERC-4626 operation being evaluated.
      * @return result Guard result for the requested operation.
      * @return previewShares Previewed shares from the guard.
      * @return previewAssets Previewed assets from the guard.
      */
-    function storeCheck(address vault, address user, uint256 amount, bool isDeposit)
+    function storeCheck(address vault, address user, uint256 amount, VaultOpType opType)
         external
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets);
 
@@ -45,9 +46,9 @@ interface IERC4626VaultGuard {
      * @param vault Address of the vault to validate.
      * @param user Address whose stored check is validated.
      * @param amount Assets or shares to validate.
-     * @param isDeposit True for deposit flow, false for redeem flow.
+     * @param opType Type of ERC-4626 operation being validated.
      */
-    function validate(address vault, address user, uint256 amount, bool isDeposit) external view;
+    function validate(address vault, address user, uint256 amount, VaultOpType opType) external view;
 
     /**
      * @notice Returns the latest stored vault check for a user.
@@ -73,22 +74,24 @@ interface ISwapV2Guard {
      * @notice Runs a swap guard check for the provided path and amount.
      * @param router Address of the AMM router.
      * @param path Swap path to evaluate.
-     * @param amountIn Input amount used for the check.
+     * @param amount Amount used for the check.
+     * @param isExactTokenIn Whether the amount represents an exact-input swap.
      * @return result Guard result for the requested swap.
      */
-    function swapCheckV2(address router, address[] calldata path, uint256 amountIn)
+    function swapCheckV2(address router, address[] calldata path, uint256 amount, bool isExactTokenIn)
         external
-        returns (SwapV2GuardResult memory result);
+        returns (SwapV2GuardResult memory result, uint256[] memory amountsOut);
 
     /**
      * @notice Stores a swap guard check for later validation.
      * @param router Address of the AMM router.
      * @param path Swap path to evaluate.
-     * @param amountIn Input amount used for the check.
+     * @param amount Amount used for the check.
+     * @param isExactTokenIn Whether the amount represents an exact-input swap.
      * @param user Address whose check is being stored.
      * @return Stored guard result.
      */
-    function storeSwapCheck(address router, address[] calldata path, uint256 amountIn, address user)
+    function storeSwapCheck(address router, address[] calldata path, uint256 amount, bool isExactTokenIn, address user)
         external
         returns (SwapV2GuardResult memory);
 
@@ -96,10 +99,17 @@ interface ISwapV2Guard {
      * @notice Validates the latest stored swap check for a user.
      * @param router Address of the AMM router.
      * @param path Swap path to validate.
-     * @param amountIn Input amount used for the check.
+     * @param amount Amount used for the check.
+     * @param isExactTokenIn Whether the amount represents an exact-input swap.
      * @param user Address whose stored check is validated.
      */
-    function validateSwapCheck(address router, address[] calldata path, uint256 amountIn, address user) external view;
+    function validateSwapCheck(
+        address router,
+        address[] calldata path,
+        uint256 amount,
+        bool isExactTokenIn,
+        address user
+    ) external;
 }
 
 /**

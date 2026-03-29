@@ -42,6 +42,12 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
     event GuardedRedeemExecuted(
         address indexed user, address indexed vault, address indexed receiver, uint256 sharesIn, uint256 assetsOut
     );
+    event GuardedMintExecuted(
+        address indexed user, address indexed vault, address indexed receiver, uint256 sharesOut, uint256 assetsIn
+    );
+    event GuardedWithdrawExecuted(
+        address indexed user, address indexed vault, address indexed receiver, uint256 assetsOut, uint256 sharesIn
+    );
 
     /**
      * @notice Deploys the router with the guard, risk policy, and report NFT addresses.
@@ -95,33 +101,18 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Runs a guarded preview for an ERC-4626 deposit flow.
+     * @notice Runs a guarded preview for an ERC-4626 deposit/withdraw/redeem/mint flow.
      * @param vault Address of the target vault.
-     * @param assetAmount Amount of assets to deposit.
-     * @return result Guard result for the previewed operation.
-     * @return previewShares Previewed shares out from the guard.
-     * @return previewAssets Previewed asset amount returned by the guard.
-     */
-    function previewGuardedDeposit(address vault, uint256 assetAmount)
-        external
-        returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
-    {
-        return vaultGuard.checkVault(vault, assetAmount, true);
-    }
-
-    /**
-     * @notice Runs a guarded preview for an ERC-4626 redeem flow.
-     * @param vault Address of the target vault.
-     * @param shareAmount Amount of shares to redeem.
+     * @param amount Amount of assets/shares to deposit/redeem.
      * @return result Guard result for the previewed operation.
      * @return previewShares Previewed share amount returned by the guard.
      * @return previewAssets Previewed assets out from the guard.
      */
-    function previewGuardedRedeem(address vault, uint256 shareAmount)
+    function guardedPreview(address vault, uint256 amount, VaultOpType opType)
         external
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets)
     {
-        return vaultGuard.checkVault(vault, shareAmount, false);
+        return vaultGuard.checkVault(vault, amount, opType);
     }
 
     /**
@@ -131,14 +122,38 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param offChainData ABI-encoded off-chain simulation data.
      * @return The packed risk report.
      */
-    function storeAndMintDepositCheck(address vault, uint256 assetAmount, bytes calldata offChainData)
+    function storeDepositCheck(address vault, uint256 assetAmount, bytes calldata offChainData)
         external
         nonReentrant
         returns (uint256)
     {
-        (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets) =
-            vaultGuard.storeCheck(vault, msg.sender, assetAmount, true);
+        VaultGuardResult memory result;
+        uint256 previewShares;
+        uint256 previewAssets;
+        (result, previewShares, previewAssets) =
+            vaultGuard.storeCheck(vault, msg.sender, assetAmount, VaultOpType.DEPOSIT);
         uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.DEPOSIT);
+        riskReportNFT.mint(encodedOnAndOffChain);
+        return encodedOnAndOffChain;
+    }
+
+    /**
+     * @notice Stores a mint check, evaluates risk, and mints the packed report NFT.
+     * @param vault Address of the target vault.
+     * @param shareAmount Amount of shares to validate for mint.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return value The packed risk report.
+     */
+    function storeMintCheck(address vault, uint256 shareAmount, bytes calldata offChainData)
+        external
+        nonReentrant
+        returns (uint256 value)
+    {
+        VaultGuardResult memory result;
+        uint256 previewShares;
+        uint256 previewAssets;
+        (result, previewShares, previewAssets) = vaultGuard.storeCheck(vault, msg.sender, shareAmount, VaultOpType.MINT);
+        uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.MINT);
         riskReportNFT.mint(encodedOnAndOffChain);
         return encodedOnAndOffChain;
     }
@@ -150,14 +165,39 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param offChainData ABI-encoded off-chain simulation data.
      * @return value The packed risk report.
      */
-    function storeAndMintRedeemCheck(address vault, uint256 shareAmount, bytes calldata offChainData)
+    function storeRedeemCheck(address vault, uint256 shareAmount, bytes calldata offChainData)
         external
         nonReentrant
         returns (uint256 value)
     {
-        (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets) =
-            vaultGuard.storeCheck(vault, msg.sender, shareAmount, false);
+        VaultGuardResult memory result;
+        uint256 previewShares;
+        uint256 previewAssets;
+        (result, previewShares, previewAssets) =
+            vaultGuard.storeCheck(vault, msg.sender, shareAmount, VaultOpType.REDEEM);
         uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.REDEEM);
+        riskReportNFT.mint(encodedOnAndOffChain);
+        return encodedOnAndOffChain;
+    }
+
+    /**
+     * @notice Stores a withdraw check, evaluates risk, and mints the packed report NFT.
+     * @param vault Address of the target vault.
+     * @param assetAmount Amount of assets to validate for withdraw.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return value The packed risk report.
+     */
+    function storeWithdrawCheck(address vault, uint256 assetAmount, bytes calldata offChainData)
+        external
+        nonReentrant
+        returns (uint256 value)
+    {
+        VaultGuardResult memory result;
+        uint256 previewShares;
+        uint256 previewAssets;
+        (result, previewShares, previewAssets) =
+            vaultGuard.storeCheck(vault, msg.sender, assetAmount, VaultOpType.WITHDRAW);
+        uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.WITHDRAW);
         riskReportNFT.mint(encodedOnAndOffChain);
         return encodedOnAndOffChain;
     }
@@ -169,7 +209,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param receiver Address receiving minted shares.
      * @param minSharesOut Minimum acceptable shares out.
      * @param offChainData ABI-encoded off-chain simulation data.
-     * @return sharesOut Amount of shares received.
+     * @return sharesOut Amount of shares received and minted.
      */
     function guardedDeposit(
         address vault,
@@ -182,8 +222,12 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
             revert InvalidReceiver();
         }
 
-        vaultGuard.validate(vault, msg.sender, assetAmount, true);
-        (VaultGuardResult memory result,,,) = vaultGuard.getLastCheck(vault, msg.sender);
+        vaultGuard.validate(vault, msg.sender, assetAmount, VaultOpType.DEPOSIT);
+        (, uint256 previewShares,,) = vaultGuard.getLastCheck(vault, msg.sender);
+
+        if (previewShares < minSharesOut) {
+            revert SlippageExceeded(previewShares, minSharesOut);
+        }
 
         address asset = IERC4626(vault).asset();
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assetAmount);
@@ -204,9 +248,59 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Executes a guarded ERC-4626 mint after validation.
+     * @param vault Address of the target vault.
+     * @param shareAmount Amount of shares to mint.
+     * @param receiver Address receiving minted shares.
+     * @param minAssetsOut Minimum acceptable assets out.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return assetsOut Amount of assets invested.
+     */
+    function guardedMint(
+        address vault,
+        uint256 shareAmount,
+        address receiver,
+        uint256 minAssetsOut,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 assetsOut) {
+        if (receiver == address(0)) {
+            revert InvalidReceiver();
+        }
+
+        vaultGuard.validate(vault, msg.sender, shareAmount, VaultOpType.MINT);
+        (,, uint256 previewAssets,) = vaultGuard.getLastCheck(vault, msg.sender);
+
+        if (previewAssets < minAssetsOut) {
+            revert SlippageExceeded(previewAssets, minAssetsOut);
+        }
+
+        address asset = IERC4626(vault).asset();
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), previewAssets);
+        IERC20(asset).forceApprove(vault, previewAssets);
+
+        assetsOut = IERC4626(vault).mint(shareAmount, receiver);
+
+        IERC20(asset).forceApprove(vault, 0);
+
+        if (assetsOut == 0) {
+            revert ZeroOutput();
+        }
+        if (assetsOut < minAssetsOut) {
+            revert SlippageExceeded(assetsOut, minAssetsOut);
+        }
+        // refund any excess assets sent by the user
+        if (previewAssets > assetsOut) {
+            uint256 excessAssets = previewAssets - assetsOut;
+            IERC20(asset).safeTransfer(msg.sender, excessAssets);
+        }
+
+        emit GuardedMintExecuted(msg.sender, vault, receiver, shareAmount, assetsOut);
+    }
+
+    /**
      * @notice Executes a guarded ERC-4626 redeem after validation.
      * @param vault Address of the target vault.
-     * @param shareAmount Amount of shares to redeem.
+     * @param shareAmount Amount of shares to redeem and burn.
      * @param receiver Address receiving redeemed assets.
      * @param minAssetsOut Minimum acceptable assets out.
      * @param offChainData ABI-encoded off-chain simulation data.
@@ -223,8 +317,12 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
             revert InvalidReceiver();
         }
 
-        vaultGuard.validate(vault, msg.sender, shareAmount, false);
-        (VaultGuardResult memory result,,,) = vaultGuard.getLastCheck(vault, msg.sender);
+        vaultGuard.validate(vault, msg.sender, shareAmount, VaultOpType.REDEEM);
+        (,, uint256 previewAssets,) = vaultGuard.getLastCheck(vault, msg.sender);
+
+        if (previewAssets < minAssetsOut) {
+            revert SlippageExceeded(previewAssets, minAssetsOut);
+        }
 
         IERC20(vault).safeTransferFrom(msg.sender, address(this), shareAmount);
         assetsOut = IERC4626(vault).redeem(shareAmount, receiver, address(this));
@@ -237,6 +335,52 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         }
 
         emit GuardedRedeemExecuted(msg.sender, vault, receiver, shareAmount, assetsOut);
+    }
+
+    /**
+     * @notice Executes a guarded ERC-4626 withdraw after validation.
+     * @param vault Address of the target vault.
+     * @param assetAmount Amount of assets to withdraw.
+     * @param receiver Address receiving withdrawn assets.
+     * @param minSharesOut Minimum acceptable shares out.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @return sharesOut Amount of shares burned.
+     */
+    function guardedWithdraw(
+        address vault,
+        uint256 assetAmount,
+        address receiver,
+        uint256 minSharesOut,
+        bytes calldata offChainData
+    ) external nonReentrant returns (uint256 sharesOut) {
+        if (receiver == address(0)) {
+            revert InvalidReceiver();
+        }
+
+        vaultGuard.validate(vault, msg.sender, assetAmount, VaultOpType.WITHDRAW);
+        (, uint256 previewShares,,) = vaultGuard.getLastCheck(vault, msg.sender);
+
+        if (previewShares < minSharesOut) {
+            revert SlippageExceeded(previewShares, minSharesOut);
+        }
+
+        IERC20(vault).safeTransferFrom(msg.sender, address(this), previewShares);
+        sharesOut = IERC4626(vault).withdraw(assetAmount, receiver, address(this));
+
+        if (sharesOut == 0) {
+            revert ZeroOutput();
+        }
+        if (sharesOut < minSharesOut) {
+            revert SlippageExceeded(sharesOut, minSharesOut);
+        }
+
+        // refund any excess shares sent by the user
+        if (previewShares > sharesOut) {
+            uint256 excessShares = previewShares - sharesOut;
+            IERC20(vault).safeTransfer(msg.sender, excessShares);
+        }
+
+        emit GuardedWithdrawExecuted(msg.sender, vault, receiver, assetAmount, sharesOut);
     }
 
     /**

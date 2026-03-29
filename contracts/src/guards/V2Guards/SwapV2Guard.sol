@@ -51,6 +51,14 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         uint256 lastBlock; // block.number at snapshot
     }
 
+    struct StoredSwapCheck {
+        uint256 packed;
+        bytes data;
+        uint8 length;
+        bool isCompact;
+        uint256 value;
+    }
+
     /// @CONSTANTS
 
     /// Minimum reserve (raw units). Below this we flag LOW_LIQUIDITY.
@@ -83,7 +91,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     mapping(address => uint256) public poolFirstSeenBlock; // Block number at which a pool was first snapshotted (used as a proxy for pool age when the pair contract itself doesn't store creation block).
     uint256 public snapshotBlockInterval; // How many blocks between Chainlink Automation snapshots.
     /// user => router => bytes
-    mapping(address => mapping(address => bytes)) internal storedUserChecksPerRouter;
+    mapping(address => mapping(address => StoredSwapCheck)) internal storedUserChecksPerRouter;
     mapping(address => mapping(address => uint256)) public lastCheckBlock; // user => router => block number of last stored check (used to prevent replaying old checks)
 
     /// EVENTS
@@ -121,16 +129,110 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
+    //--------------------------------------------// ADMIN FUNCTIONS //---------------------------------------------//
+
+    function addTrackedPool(address pool) external onlyOwner {
+        require(pool != address(0), "ZERO_ADDRESS");
+        trackedPools.push(pool);
+
+        if (poolFirstSeenBlock[pool] == 0) {
+            poolFirstSeenBlock[pool] = block.number;
+        }
+
+        _recordSnapshot(pool);
+        emit PoolTracked(pool);
+    }
+
+    function removeTrackedPool(address pool) external onlyOwner {
+        uint256 len = trackedPools.length;
+        for (uint256 i = 0; i < len;) {
+            if (trackedPools[i] == pool) {
+                trackedPools[i] = trackedPools[len - 1];
+                trackedPools.pop();
+                return;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        revert("POOL_NOT_TRACKED");
+    }
+
+    function setSnapshotBlockInterval(uint256 blocks_) external onlyOwner {
+        require(blocks_ > 0, "ZERO_INTERVAL");
+        snapshotBlockInterval = blocks_;
+        emit SnapshotBlockIntervalSet(blocks_);
+    }
+
+    function setTrustedRouter(address router, bool status) external onlyOwner {
+        trustedRouters[router] = status;
+        emit RouterTrustSet(router, status);
+    }
+
+    function setTrustedFactory(address factory, bool status) external onlyOwner {
+        trustedFactories[factory] = status;
+        emit FactoryTrustSet(factory, status);
+    }
+
+    /**
+     * @notice Set the Chainlink Automation forwarder address.
+     */
+    function setAutomationForwarder(address forwarder) external onlyOwner {
+        require(forwarder != address(0), "ZERO_ADDRESS");
+        automationForwarder = forwarder;
+        emit ForwarderSet(forwarder);
+    }
+
+    function setPreflightCaller(address caller, bool authorized) external onlyOwner {
+        require(caller != address(0), "ZERO_ADDRESS");
+        authorizedPreflightCallers[caller] = authorized;
+        emit PreflightCallerSet(caller, authorized);
+    }
+
+    function trackedPoolsLength() external view returns (uint256) {
+        return trackedPools.length;
+    }
+
+    // EXTERNAL FUNCTION //
+
+    function swapCheckV2(address router, address[] calldata path, uint256 amount, bool isExactTokenIn)
+        external
+        returns (SwapV2GuardResult memory result, uint256[] memory amountsOut)
+    {
+        return _swapCheckV2(router, path, amount, isExactTokenIn);
+    }
 
     /**
      * @notice Validate that pool state has not changed since storeSwapCheck.
      *         Called by SwapV2Executor before executing swaps.
      */
-    function validateSwapCheck(address router, address[] calldata path, uint256 amountIn, address user) external {
+    function validateSwapCheck(
+        address router,
+        address[] calldata path,
+        uint256 amount,
+        bool isExactTokenIn,
+        address user
+    ) external {
         require(lastCheckBlock[user][router] == block.number, "STALE_CHECK");
-        SwapV2GuardResult memory currentResult = swapCheckV2(router, path, amountIn);
-        bytes32 currentFingerprint = keccak256(abi.encode(currentResult));
-        bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
+
+        SwapV2GuardResult memory currentResult;
+        uint256[] memory amountsOut;
+        (currentResult, amountsOut) = _swapCheckV2(router, path, amount, isExactTokenIn);
+
+        uint256 amountOut;
+        if (amountsOut.length == 0) {
+            // This can happen if the path is invalid or if getAmountsOut/getAmountsIn reverts. In either case, we want to fail validation.
+            revert("INVALID_PATH_OR_AMOUNT");
+        }
+
+        if (isExactTokenIn) amountOut = amountsOut[amountsOut.length - 1];
+        else amountOut = amountsOut[0];
+
+        StoredSwapCheck memory currentCheck = _packedCheck(currentResult, amountOut);
+        StoredSwapCheck memory storedCheck = storedUserChecksPerRouter[user][router];
+
+        bytes32 currentFingerprint = keccak256(abi.encode(currentCheck));
+        bytes32 storedFingerprint = keccak256(abi.encode(storedCheck));
         require(currentFingerprint == storedFingerprint, "SWAP_STATE_CHANGED");
     }
 
@@ -138,168 +240,44 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
      * @notice Store swap state fingerprint for `user`. Called by PreFlightRouter.
      *         The fingerprint covers pool reserves and TWAP snapshots for all hops.
      */
-    function storeSwapCheck(address router, address[] calldata path, uint256 amountIn, address user)
+    function storeSwapCheck(address router, address[] calldata path, uint256 amount, bool isExactTokenIn, address user)
         external
         nonReentrant
         onlyPreflightCaller
         returns (SwapV2GuardResult memory)
     {
         require(user != address(0), "INVALID_USER");
-        require(amountIn > 0, "AMOUNT_IN_IS_ZERO");
+        require(amount > 0, "AMOUNT_IN_IS_ZERO");
 
-        SwapV2GuardResult memory result = swapCheckV2(router, path, amountIn);
-        storedUserChecksPerRouter[user][router] = abi.encode(result);
+        SwapV2GuardResult memory result;
+        uint256[] memory amountsOut;
+        (result, amountsOut) = _swapCheckV2(router, path, amount, isExactTokenIn);
+        uint256 amountOut;
+
+        if (amountsOut.length == 0) {
+            // This can happen if the path is invalid or if getAmountsOut/getAmountsIn reverts.
+            revert("INVALID_PATH_OR_AMOUNT");
+        }
+
+        if (isExactTokenIn) amountOut = amountsOut[amountsOut.length - 1];
+        else amountOut = amountsOut[0];
+
+        storedUserChecksPerRouter[user][router] = _packedCheck(result, amountOut);
         lastCheckBlock[user][router] = block.number;
 
         emit SwapCheckStored(user, router, result, block.number);
         return result;
     }
 
-
-    // EXTERNAL VIEW FUNCTION //
-
-    /**
-     * @notice Core Pre-transaction swap check function. Called as a static call before submitting a swap.
-     *
-     * @param router    The Uniswap V2-compatible/forked router to be used.
-     * @param path      Token path (e.g. [WETH, USDC] for a single-hop).
-     * @param amountIn  The exact input amount for the swap (used for impact check).
-     *                  Pass 0 to skip the impact check.
-     * @return result   SwapV2GuardResult flags struct. All false = clean.
-     */
-    function swapCheckV2(address router, address[] calldata path, uint256 amountIn)
-        public
-        returns (SwapV2GuardResult memory result)
+    function getStoredCheck(address user, address router)
+        external
+        view
+        returns (SwapV2GuardResult memory result, uint256 amountOut)
     {
-        if (!trustedRouters[router]) {
-            result.ROUTER_NOT_TRUSTED = true;
-        }
-
-        uint256 len = path.length;
-        require(len >= 2, "PATH_TOO_SHORT");
-        result.tokenResult = new TokenGuardResult[](len);
-
-        if (len > MAX_PATH_LEN) {
-            result.DEEP_MULTIHOP = true;
-        }
-
-        if (_hasDuplicateToken(path)) {
-            result.DUPLICATE_TOKEN_IN_PATH = true;
-        }
-
-        address factory = IUniswapV2Router(router).factory();
-        if (!trustedFactories[factory]) {
-            result.FACTORY_NOT_TRUSTED = true;
-        }
-
-        for (uint256 i = 0; i < len - 1;) {
-            address tokenIn = path[i];
-            address tokenOut = path[i + 1];
-
-            address pair = IUniswapV2Factory(factory).getPair(tokenIn, tokenOut);
-
-            if (pair == address(0)) {
-                result.POOL_NOT_EXISTS = true;
-                unchecked {
-                    ++i;
-                }
-                continue;
-            }
-
-            // Factory stored inside the pair must match the router's factory.
-            if (IUniswapV2Pair(pair).factory() != factory) {
-                result.FACTORY_MISMATCH = true;
-                unchecked {
-                    ++i;
-                }
-                continue;
-            }
-
-            (uint112 r0, uint112 r1, uint32 blockTimestampLast) = IUniswapV2Pair(pair).getReserves();
-
-            if (r0 == 0 || r1 == 0) {
-                result.ZERO_LIQUIDITY = true;
-                unchecked {
-                    ++i;
-                }
-                continue;
-            }
-
-            // this will check the token
-            result.tokenResult[i] = tokenGuard.checkToken(tokenIn);
-
-            if (i == len - 2) {
-                // also check the final output token
-                result.tokenResult[i + 1] = tokenGuard.checkToken(tokenOut);
-            
-            }
-
-            address token0 = IUniswapV2Pair(pair).token0();
-            address token1 = IUniswapV2Pair(pair).token1();
-            uint256 token0Decimals = IERC20Metadata(token0).decimals();
-            uint256 token1Decimals = IERC20Metadata(token1).decimals();
-            uint256 RawReserve0 = uint256(r0) / (10 ** token0Decimals);
-            uint256 RawReserve1 = uint256(r1) / (10 ** token1Decimals);
-
-            if (RawReserve0 < MINIMUM_RAW_RESERVE || RawReserve1 < MINIMUM_RAW_RESERVE) {
-                result.LOW_LIQUIDITY = true;
-            }
-
-            if (IUniswapV2Pair(pair).totalSupply() < THRESHOLD_LP_SUPPLY) {
-                result.LOW_LP_SUPPLY = true;
-            }
-
-            uint256 firstSeen = poolFirstSeenBlock[pair];
-            if (firstSeen != 0 && block.number - firstSeen < MIN_POOL_AGE_BLOCKS) {
-                result.POOL_TOO_NEW = true;
-            }
-
-            if (_isSeverelyImbalanced(RawReserve0, RawReserve1)) {
-                result.SEVERE_IMBALANCE = true;
-            }
-
-            // If fee switch is off, kLast == 0 so we skip. If it's set and the
-            // current k < kLast, the reserves have been drained abnormally.
-            uint256 kLast = IUniswapV2Pair(pair).kLast();
-            if (kLast > 0) {
-                uint256 currentK = uint256(r0) * uint256(r1);
-                if (currentK < kLast) {
-                    result.K_INVARIANT_BROKEN = true;
-                }
-            }
-
-            // Using block number: if the pair's last-updated timestamp matches
-            // the current block's timestamp exactly, a tx already ran in this block.
-            if (uint32(block.timestamp) == blockTimestampLast) {
-                result.FLASHLOAN_RISK = true;
-            }
-
-            //  Swap impact
-            if (amountIn > 0 && i == 0) {
-                // Check impact only on the first hop (subsequent hops depend on output).
-                address token0 = IUniswapV2Pair(pair).token0();
-                uint256 reserveIn = (tokenIn == token0) ? uint256(r0) : uint256(r1);
-                if (_isHighImpact(amountIn, reserveIn)) {
-                    result.HIGH_SWAP_IMPACT = true;
-                }
-            }
-
-            if (_isPriceManipulated(pair, tokenIn, r0, r1, blockTimestampLast)) {
-                result.PRICE_MANIPULATED = true;
-            }
-
-            unchecked {
-                ++i;
-            }
-        }
-        emit SwapCheckPerformed(router, path, amountIn, result);
-    }
-
-
-    function getStoredCheck(address user, address router) external view returns (SwapV2GuardResult memory) {
-        SwapV2GuardResult memory result = abi.decode(storedUserChecksPerRouter[user][router], (SwapV2GuardResult));
-        require(result.tokenResult.length > 0, "NO_STORED_CHECK");
-        return result;
+        require(lastCheckBlock[user][router] == block.number, "NO_STORED_CHECK");
+        StoredSwapCheck memory storedCheck = storedUserChecksPerRouter[user][router];
+        (result, amountOut) = _unpackedCheck(storedCheck);
+        return (result, amountOut);
     }
 
     /**
@@ -365,8 +343,6 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         return (true, abi.encode(pools));
     }
 
-    //-----------------------------------//@STORAGE WRITE FUNCTIONS//-----------------------------------------------//
-
     /**
      * @notice Chainlink Automation performUpkeep — records snapshots.
      */
@@ -387,8 +363,183 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         }
     }
 
+    //------------------------------// INTERNAL PURE HELPER FUNCTIONS//-------------------------------------------//
 
-    //------------------------------// @INTERNAL PURE HELPER FUNCTIONS//-------------------------------------------//
+    /**
+     * @notice Core Pre-transaction swap check function. Called as a static call before submitting a swap.
+     *
+     * @param router    The Uniswap V2-compatible/forked router to be used.
+     * @param path      Token path (e.g. [WETH, USDC] for a single-hop).
+     * @param amount  The exact input/output amount for the swap (used for impact check).
+     *                  Pass 0 to skip the impact check.
+     * @param isExactTokenIn Whether the provided amount is the exact input (true) or exact output (false) for the swap. This determines which side of the first/last pool we check for swap impact.
+     * @return result   SwapV2GuardResult flags struct. All false = clean.
+     */
+    function _swapCheckV2(address router, address[] calldata path, uint256 amount, bool isExactTokenIn)
+        internal
+        returns (SwapV2GuardResult memory result, uint256[] memory amountsOut)
+    {
+        if (!trustedRouters[router]) {
+            result.ROUTER_NOT_TRUSTED = true;
+        }
+
+        uint256 len = path.length;
+        require(len >= 2, "PATH_TOO_SHORT");
+        result.tokenResult = new TokenGuardResult[](len);
+
+        if (len > MAX_PATH_LEN) {
+            result.DEEP_MULTIHOP = true;
+        }
+
+        if (_hasDuplicateToken(path)) {
+            result.DUPLICATE_TOKEN_IN_PATH = true;
+        }
+
+        address factory = IUniswapV2Router(router).factory();
+        if (!trustedFactories[factory]) {
+            result.FACTORY_NOT_TRUSTED = true;
+        }
+
+        for (uint256 i = 0; i < len - 1;) {
+            address tokenIn = path[i];
+            address tokenOut = path[i + 1];
+
+            address pair = IUniswapV2Factory(factory).getPair(tokenIn, tokenOut);
+
+            if (pair == address(0)) {
+                result.POOL_NOT_EXISTS = true;
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
+
+            uint112 r0;
+            uint112 r1;
+            uint32 blockTimestampLast;
+            address token0;
+            {
+                IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
+
+                // Factory stored inside the pair must match the router's factory.
+                if (pairContract.factory() != factory) {
+                    result.FACTORY_MISMATCH = true;
+                    unchecked {
+                        ++i;
+                    }
+                    continue;
+                }
+
+                (r0, r1, blockTimestampLast) = pairContract.getReserves();
+
+                if (r0 == 0 || r1 == 0) {
+                    result.ZERO_LIQUIDITY = true;
+                    unchecked {
+                        ++i;
+                    }
+                    continue;
+                }
+
+                token0 = pairContract.token0();
+            }
+
+            // this will check the token
+            result.tokenResult[i] = tokenGuard.checkToken(tokenIn);
+
+            {
+                uint8 poolFlags = _checkPoolState(pair, r0, r1, blockTimestampLast);
+                if ((poolFlags & 1) != 0) result.LOW_LIQUIDITY = true;
+                if ((poolFlags & 2) != 0) result.SEVERE_IMBALANCE = true;
+                if ((poolFlags & 4) != 0) result.LOW_LP_SUPPLY = true;
+                if ((poolFlags & 8) != 0) result.POOL_TOO_NEW = true;
+                if ((poolFlags & 16) != 0) result.K_INVARIANT_BROKEN = true;
+                if ((poolFlags & 32) != 0) result.FLASHLOAN_RISK = true;
+            }
+
+            if (i == len - 2) {
+                // also check the final output token
+                result.tokenResult[i + 1] = tokenGuard.checkToken(tokenOut);
+            }
+
+            //  Swap impact
+            if (amount > 0 && i == 0 && isExactTokenIn) {
+                // Check impact only on the first hop (subsequent hops depend on output).
+                uint256 reserveIn = (tokenIn == token0) ? uint256(r0) : uint256(r1);
+                if (_isHighImpact(amount, reserveIn)) {
+                    result.HIGH_SWAP_IMPACT = true;
+                }
+            }
+
+            //Swap impact of last pair  for !isExactTokenIn
+            if (amount > 0 && i == len - 2 && !isExactTokenIn) {
+                // Check impact only on the first hop (subsequent hops depend on output).
+                uint256 reserveIn = (tokenOut == token0) ? uint256(r0) : uint256(r1);
+                if (_isHighImpact(amount, reserveIn)) {
+                    result.HIGH_SWAP_IMPACT = true;
+                }
+            }
+
+            if (_isPriceManipulated(pair, tokenIn, r0, r1, blockTimestampLast)) {
+                result.PRICE_MANIPULATED = true;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        if (isExactTokenIn) {
+            amountsOut = IUniswapV2Router(router).getAmountsOut(amount, path);
+        }
+
+        if (!isExactTokenIn) {
+            amountsOut = IUniswapV2Router(router).getAmountsIn(amount, path);
+        }
+
+        emit SwapCheckPerformed(router, path, amount, result);
+    }
+
+    function _checkPoolState(
+        address pair,
+        uint112 r0,
+        uint112 r1,
+        uint32 blockTimestampLast
+    ) internal view returns (uint8 flags) {
+        IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
+        address token0 = pairContract.token0();
+        address token1 = pairContract.token1();
+        uint256 rawReserve0 = uint256(r0) / (10 ** IERC20Metadata(token0).decimals());
+        uint256 rawReserve1 = uint256(r1) / (10 ** IERC20Metadata(token1).decimals());
+
+        if (rawReserve0 < MINIMUM_RAW_RESERVE || rawReserve1 < MINIMUM_RAW_RESERVE) {
+            flags |= 1;
+        }
+
+        if (_isSeverelyImbalanced(rawReserve0, rawReserve1)) {
+            flags |= 2;
+        }
+
+        if (pairContract.totalSupply() < THRESHOLD_LP_SUPPLY) {
+            flags |= 4;
+        }
+
+        uint256 firstSeen = poolFirstSeenBlock[pair];
+        if (firstSeen != 0 && block.number - firstSeen < MIN_POOL_AGE_BLOCKS) {
+            flags |= 8;
+        }
+
+        uint256 kLast = pairContract.kLast();
+        if (kLast > 0) {
+            uint256 currentK = uint256(r0) * uint256(r1);
+            if (currentK < kLast) {
+                flags |= 16;
+            }
+        }
+
+        if (uint32(block.timestamp) == blockTimestampLast) {
+            flags |= 32;
+        }
+    }
 
     /**
      * @dev Records a TWAP snapshot with corrected cumulative price (includes
@@ -522,67 +673,216 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         return (diff * 10_000) / twap < MAX_DEVIATION_BPS;
     }
 
-    //--------------------------------------------// @ADMIN FUNCTIONS //---------------------------------------------//
+    function _packedCheck(SwapV2GuardResult memory result, uint256 amount)
+        internal
+        returns (StoredSwapCheck memory storedCheck)
+    {
+        uint16 core = _packSwapCore(result);
 
-    function addTrackedPool(address pool) external onlyOwner {
-        require(pool != address(0), "ZERO_ADDRESS");
-        trackedPools.push(pool);
+        uint8 length = uint8(result.tokenResult.length);
+        uint32[] memory tokens = new uint32[](length);
 
-        if (poolFirstSeenBlock[pool] == 0) {
-            poolFirstSeenBlock[pool] = block.number;
+        for (uint256 i; i < length; ++i) {
+            tokens[i] = _packToken(result.tokenResult[i]);
         }
 
-        _recordSnapshot(pool);
-        emit PoolTracked(pool);
+        if (length <= 7) {
+            storedCheck.packed = _packSwapUint256(core, tokens);
+            storedCheck.isCompact = true;
+            storedCheck.length = length;
+            storedCheck.value = amount;
+        } else {
+            storedCheck.data = _packSwapBytes(core, tokens);
+            storedCheck.isCompact = false;
+            storedCheck.length = length;
+            storedCheck.packed = 0;
+            storedCheck.value = amount;
+        }
     }
 
-    function removeTrackedPool(address pool) external onlyOwner {
-        uint256 len = trackedPools.length;
-        for (uint256 i = 0; i < len;) {
-            if (trackedPools[i] == pool) {
-                trackedPools[i] = trackedPools[len - 1];
-                trackedPools.pop();
-                return;
-            }
-            unchecked {
-                ++i;
+    function _unpackedCheck(StoredSwapCheck memory storedCheck)
+        internal
+        view
+        returns (SwapV2GuardResult memory result, uint256 amountOut)
+    {
+        bool isCompact = storedCheck.isCompact;
+        uint8 length = storedCheck.length;
+
+        uint16 core;
+        uint32[] memory tokens;
+
+        if (isCompact) {
+            (core, tokens) = _unpackSwapUint256(storedCheck.packed, length);
+        } else {
+            (core, tokens) = _unpackSwapBytes(storedCheck.data);
+        }
+        result = _unpack(core, tokens);
+        amountOut = storedCheck.value;
+
+        return (result, amountOut);
+    }
+
+    function _unpack(uint16 core, uint32[] memory tokens) internal pure returns (SwapV2GuardResult memory r) {
+        r = _unpackSwapCore(core);
+        uint256 length = tokens.length;
+        r.tokenResult = new TokenGuardResult[](length);
+        for (uint256 i; i < length; ++i) {
+            r.tokenResult[i] = _unpackToken(tokens[i]);
+        }
+    }
+
+    function _packSwapUint256(uint16 core, uint32[] memory tokens) internal pure returns (uint256 packed) {
+        require(tokens.length <= 7, "TOO_MANY_TOKENS");
+        packed = uint256(core);
+        uint256 size = tokens.length;
+        for (uint256 i; i < size; ++i) {
+            packed |= uint256(tokens[i]) << (16 + i * 32);
+        }
+    }
+
+    function _unpackSwapUint256(uint256 packed, uint8 len) internal pure returns (uint16 core, uint32[] memory tokens) {
+        core = uint16(packed);
+        tokens = new uint32[](len);
+        for (uint256 i; i < len; ++i) {
+            tokens[i] = uint32(packed >> (16 + i * 32));
+        }
+    }
+
+    function _packSwapBytes(uint16 core, uint32[] memory tokens) internal pure returns (bytes memory out) {
+        uint256 len = tokens.length;
+        out = new bytes(2 + len * 4);
+
+        assembly {
+            mstore(add(out, 32), shl(240, core))
+        }
+
+        for (uint256 i; i < len; ++i) {
+            uint32 t = tokens[i];
+            uint256 offset = 2 + i * 4;
+
+            assembly {
+                let ptr := add(add(out, 32), offset)
+                mstore(ptr, shl(224, t))
             }
         }
-        revert("POOL_NOT_TRACKED");
     }
 
-    function setSnapshotBlockInterval(uint256 blocks_) external onlyOwner {
-        require(blocks_ > 0, "ZERO_INTERVAL");
-        snapshotBlockInterval = blocks_;
-        emit SnapshotBlockIntervalSet(blocks_);
+    function _unpackSwapBytes(bytes memory data) internal pure returns (uint16 core, uint32[] memory tokens) {
+        assembly {
+            core := shr(240, mload(add(data, 32)))
+        }
+
+        uint256 len = (data.length - 2) / 4;
+        tokens = new uint32[](len);
+
+        for (uint256 i; i < len; ++i) {
+            uint32 t;
+            uint256 offset = 2 + i * 4;
+
+            assembly {
+                let ptr := add(add(data, 32), offset)
+                t := shr(224, mload(ptr))
+            }
+
+            tokens[i] = t;
+        }
     }
 
-    function setTrustedRouter(address router, bool status) external onlyOwner {
-        trustedRouters[router] = status;
-        emit RouterTrustSet(router, status);
+    function _packSwapCore(SwapV2GuardResult memory guardResult) internal pure returns (uint16 result) {
+        if (guardResult.ROUTER_NOT_TRUSTED) result |= uint16(1) << 0;
+        if (guardResult.FACTORY_NOT_TRUSTED) result |= uint16(1) << 1;
+        if (guardResult.DEEP_MULTIHOP) result |= uint16(1) << 2;
+        if (guardResult.DUPLICATE_TOKEN_IN_PATH) result |= uint16(1) << 3;
+        if (guardResult.POOL_NOT_EXISTS) result |= uint16(1) << 4;
+        if (guardResult.FACTORY_MISMATCH) result |= uint16(1) << 5;
+        if (guardResult.ZERO_LIQUIDITY) result |= uint16(1) << 6;
+        if (guardResult.LOW_LIQUIDITY) result |= uint16(1) << 7;
+        if (guardResult.LOW_LP_SUPPLY) result |= uint16(1) << 8;
+        if (guardResult.POOL_TOO_NEW) result |= uint16(1) << 9;
+        if (guardResult.SEVERE_IMBALANCE) result |= uint16(1) << 10;
+        if (guardResult.K_INVARIANT_BROKEN) result |= uint16(1) << 11;
+        if (guardResult.HIGH_SWAP_IMPACT) result |= uint16(1) << 12;
+        if (guardResult.FLASHLOAN_RISK) result |= uint16(1) << 13;
+        if (guardResult.PRICE_MANIPULATED) result |= uint16(1) << 14;
     }
 
-    function setTrustedFactory(address factory, bool status) external onlyOwner {
-        trustedFactories[factory] = status;
-        emit FactoryTrustSet(factory, status);
+    function _unpackSwapCore(uint16 packed) internal pure returns (SwapV2GuardResult memory result) {
+        result.ROUTER_NOT_TRUSTED = (packed >> 0) & 1 == 1;
+        result.FACTORY_NOT_TRUSTED = (packed >> 1) & 1 == 1;
+        result.DEEP_MULTIHOP = (packed >> 2) & 1 == 1;
+        result.DUPLICATE_TOKEN_IN_PATH = (packed >> 3) & 1 == 1;
+        result.POOL_NOT_EXISTS = (packed >> 4) & 1 == 1;
+        result.FACTORY_MISMATCH = (packed >> 5) & 1 == 1;
+        result.ZERO_LIQUIDITY = (packed >> 6) & 1 == 1;
+        result.LOW_LIQUIDITY = (packed >> 7) & 1 == 1;
+        result.LOW_LP_SUPPLY = (packed >> 8) & 1 == 1;
+        result.POOL_TOO_NEW = (packed >> 9) & 1 == 1;
+        result.SEVERE_IMBALANCE = (packed >> 10) & 1 == 1;
+        result.K_INVARIANT_BROKEN = (packed >> 11) & 1 == 1;
+        result.HIGH_SWAP_IMPACT = (packed >> 12) & 1 == 1;
+        result.FLASHLOAN_RISK = (packed >> 13) & 1 == 1;
+        result.PRICE_MANIPULATED = (packed >> 14) & 1 == 1;
     }
 
-    /**
-     * @notice Set the Chainlink Automation forwarder address.
-     */
-    function setAutomationForwarder(address forwarder) external onlyOwner {
-        require(forwarder != address(0), "ZERO_ADDRESS");
-        automationForwarder = forwarder;
-        emit ForwarderSet(forwarder);
+    function _packToken(TokenGuardResult memory tokenResult) internal pure returns (uint32 result) {
+        if (tokenResult.NOT_A_CONTRACT) result |= uint32(1) << 0;
+        if (tokenResult.EMPTY_BYTECODE) result |= uint32(1) << 1;
+        if (tokenResult.DECIMALS_REVERT) result |= uint32(1) << 2;
+        if (tokenResult.WEIRD_DECIMALS) result |= uint32(1) << 3;
+        if (tokenResult.HIGH_DECIMALS) result |= uint32(1) << 4;
+        if (tokenResult.TOTAL_SUPPLY_REVERT) result |= uint32(1) << 5;
+        if (tokenResult.ZERO_TOTAL_SUPPLY) result |= uint32(1) << 6;
+        if (tokenResult.VERY_LOW_TOTAL_SUPPLY) result |= uint32(1) << 7;
+        if (tokenResult.SYMBOL_REVERT) result |= uint32(1) << 8;
+        if (tokenResult.NAME_REVERT) result |= uint32(1) << 9;
+        if (tokenResult.IS_EIP1967_PROXY) result |= uint32(1) << 10;
+        if (tokenResult.IS_EIP1822_PROXY) result |= uint32(1) << 11;
+        if (tokenResult.IS_MINIMAL_PROXY) result |= uint32(1) << 12;
+        if (tokenResult.HAS_OWNER) result |= uint32(1) << 13;
+        if (tokenResult.OWNERSHIP_RENOUNCED) result |= uint32(1) << 14;
+        if (tokenResult.OWNER_IS_EOA) result |= uint32(1) << 15;
+        if (tokenResult.IS_PAUSABLE) result |= uint32(1) << 16;
+        if (tokenResult.IS_CURRENTLY_PAUSED) result |= uint32(1) << 17;
+        if (tokenResult.HAS_BLACKLIST) result |= uint32(1) << 18;
+        if (tokenResult.HAS_BLOCKLIST) result |= uint32(1) << 19;
+        if (tokenResult.POSSIBLE_FEE_ON_TRANSFER) result |= uint32(1) << 20;
+        if (tokenResult.HAS_TRANSFER_FEE_GETTER) result |= uint32(1) << 21;
+        if (tokenResult.HAS_TAX_FUNCTION) result |= uint32(1) << 22;
+        if (tokenResult.POSSIBLE_REBASING) result |= uint32(1) << 23;
+        if (tokenResult.HAS_MINT_CAPABILITY) result |= uint32(1) << 24;
+        if (tokenResult.HAS_BURN_CAPABILITY) result |= uint32(1) << 25;
+        if (tokenResult.HAS_PERMIT) result |= uint32(1) << 26;
+        if (tokenResult.HAS_FLASH_MINT) result |= uint32(1) << 27;
     }
 
-    function setPreflightCaller(address caller, bool authorized) external onlyOwner {
-        require(caller != address(0), "ZERO_ADDRESS");
-        authorizedPreflightCallers[caller] = authorized;
-        emit PreflightCallerSet(caller, authorized);
-    }
-
-    function trackedPoolsLength() external view returns (uint256) {
-        return trackedPools.length;
+    function _unpackToken(uint32 packed) internal pure returns (TokenGuardResult memory result) {
+        result.NOT_A_CONTRACT = (packed >> 0) & 1 == 1;
+        result.EMPTY_BYTECODE = (packed >> 1) & 1 == 1;
+        result.DECIMALS_REVERT = (packed >> 2) & 1 == 1;
+        result.WEIRD_DECIMALS = (packed >> 3) & 1 == 1;
+        result.HIGH_DECIMALS = (packed >> 4) & 1 == 1;
+        result.TOTAL_SUPPLY_REVERT = (packed >> 5) & 1 == 1;
+        result.ZERO_TOTAL_SUPPLY = (packed >> 6) & 1 == 1;
+        result.VERY_LOW_TOTAL_SUPPLY = (packed >> 7) & 1 == 1;
+        result.SYMBOL_REVERT = (packed >> 8) & 1 == 1;
+        result.NAME_REVERT = (packed >> 9) & 1 == 1;
+        result.IS_EIP1967_PROXY = (packed >> 10) & 1 == 1;
+        result.IS_EIP1822_PROXY = (packed >> 11) & 1 == 1;
+        result.IS_MINIMAL_PROXY = (packed >> 12) & 1 == 1;
+        result.HAS_OWNER = (packed >> 13) & 1 == 1;
+        result.OWNERSHIP_RENOUNCED = (packed >> 14) & 1 == 1;
+        result.OWNER_IS_EOA = (packed >> 15) & 1 == 1;
+        result.IS_PAUSABLE = (packed >> 16) & 1 == 1;
+        result.IS_CURRENTLY_PAUSED = (packed >> 17) & 1 == 1;
+        result.HAS_BLACKLIST = (packed >> 18) & 1 == 1;
+        result.HAS_BLOCKLIST = (packed >> 19) & 1 == 1;
+        result.POSSIBLE_FEE_ON_TRANSFER = (packed >> 20) & 1 == 1;
+        result.HAS_TRANSFER_FEE_GETTER = (packed >> 21) & 1 == 1;
+        result.HAS_TAX_FUNCTION = (packed >> 22) & 1 == 1;
+        result.POSSIBLE_REBASING = (packed >> 23) & 1 == 1;
+        result.HAS_MINT_CAPABILITY = (packed >> 24) & 1 == 1;
+        result.HAS_BURN_CAPABILITY = (packed >> 25) & 1 == 1;
+        result.HAS_PERMIT = (packed >> 26) & 1 == 1;
+        result.HAS_FLASH_MINT = (packed >> 27) & 1 == 1;
     }
 }

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {VaultGuardResult, LiquidityV2GuardResult} from "../../types/OnChainTypes.sol";
-import {VaultOpType, LiquidityOpType} from "../../types/OffChainTypes.sol";
+import {VaultGuardResult, LiquidityV2GuardResult, SwapV2GuardResult} from "../../types/OnChainTypes.sol";
+import {VaultOpType, LiquidityOpType, SwapOpType} from "../../types/OffChainTypes.sol";
 import {ERC4626DecodedRiskReport} from "../../riskpolicies/ERC4626RiskPolicy.sol";
 import {LiquidityV2DecodedRiskReport} from "../../riskpolicies/LiquidityV2RiskPolicy.sol";
+import {SwapV2DecodedRiskReport} from "../../riskpolicies/SwapV2RiskPolicy.sol";
 
 /**
  * @author Sourav-IITBPL
@@ -68,3 +69,25 @@ interface ILiquidityV2RiskPolicy {
      */
     function decode(uint256 packedReport) external pure returns (LiquidityV2DecodedRiskReport memory report);
 }
+
+interface ISwapV2RiskPolicy {
+    /**
+     * @notice Evaluates a swap operation into a packed risk report.
+     * @param offChainData ABI-encoded off-chain simulation data.
+     * @param onChainData Guard result from the swap guard.
+     * @param operation Swap operation being evaluated.
+     * @return packedReport Packed risk report value.
+     */
+    function evaluate(bytes calldata offChainData, SwapV2GuardResult memory onChainData, SwapOpType operation)
+        external
+        pure
+        returns (uint256 packedReport);
+
+    /**
+     * @notice Decodes a packed swap risk report.
+     * @param packedReport Packed risk report value.
+     * @return report Decoded swap risk report.
+     */
+    function decode(uint256 packedReport) external pure returns (SwapV2DecodedRiskReport memory report);
+}
+

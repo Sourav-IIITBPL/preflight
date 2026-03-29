@@ -85,8 +85,8 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
     /// @notice Routers whose factory/pair combination is trusted by this guard.
     mapping(address => bool) public trustedRouters;
 
-    /// @dev user => router => abi.encode(LiquidityV2GuardResult) stored at check time.
-    mapping(address => mapping(address => bytes)) internal storedUserChecksPerRouter;
+    /// @dev user => router => uint96 stored at check time.  uint96 for gas optimization .
+    mapping(address => mapping(address => uint96)) internal storedUserChecksPerRouter;
 
     /// @notice Addresses allowed to call storeCheck and validateCheck.
     mapping(address => bool) public trustedCallers;
@@ -194,7 +194,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         LiquidityOperationType operationType
     ) external nonReentrant onlyTrustedCaller returns (LiquidityV2GuardResult memory result) {
         result = _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
-        storedUserChecksPerRouter[user][router] = abi.encode(_packed(result));
+        storedUserChecksPerRouter[user][router] = _packed(result);
         lastCheckBlock[user][router] = block.number;
 
         emit CheckStored(user, router, block.number);
@@ -225,8 +225,8 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         require(lastCheckBlock[user][router] == block.number, "STALE_LIQ_CHECK");
         LiquidityV2GuardResult memory currentResult =
             _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
-        bytes32 currentFingerprint = keccak256(abi.encode(_packed(currentResult)));
-        bytes32 storedFingerprint = keccak256(storedUserChecksPerRouter[user][router]);
+        uint96 currentFingerprint = _packed(currentResult);
+        uint96 storedFingerprint = storedUserChecksPerRouter[user][router];
 
         require(currentFingerprint == storedFingerprint, "LIQ_STATE_CHANGED");
     }
@@ -242,9 +242,10 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         view
         returns (LiquidityV2GuardResult memory currentResult)
     {
-        uint96 packed = abi.decode(storedUserChecksPerRouter[user][router], (uint96));
+        uint96 packed = storedUserChecksPerRouter[user][router];
         return _unpacked(packed);
     }
+
     /// INTERNAL FUNCTIONS ///
 
     /**
@@ -278,15 +279,25 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         result.tokenAResult = tokenGuard.checkToken(tokenA);
         result.tokenBResult = tokenGuard.checkToken(tokenB);
 
-        address factory = IUniswapV2Router(router).factory();
-        address pair = IUniswapV2Factory(factory).getPair(tokenA, tokenB);
+        address pair;
+        uint112 token0Reserve;
+        uint112 token1Reserve;
+        uint32 lastBlockTimestamp;
+
+        {
+            address factory = IUniswapV2Router(router).factory();
+            pair = IUniswapV2Factory(factory).getPair(tokenA, tokenB);
+        }
 
         if (pair == address(0)) {
             result.PAIR_NOT_EXISTS = true;
             return result;
         }
 
-        (uint112 token0Reserve, uint112 token1Reserve, uint32 lastBlockTimestamp) = IUniswapV2Pair(pair).getReserves();
+        {
+            IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
+            (token0Reserve, token1Reserve, lastBlockTimestamp) = pairContract.getReserves();
+        }
 
         if (token0Reserve == 0 || token1Reserve == 0) {
             result.ZERO_LIQUIDITY = true;
@@ -294,52 +305,47 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
             return result;
         }
 
-        address token0 = IUniswapV2Pair(pair).token0();
-        uint256 tokenAdecimal = _safeDecimals(tokenA);
-        uint256 tokenBdecimal = _safeDecimals(tokenB);
+        uint256 reserveA;
+        uint256 reserveB;
 
-        // Align reserves to tokenA / tokenB
-        (uint256 reserveA, uint256 reserveB) = (tokenA == token0)
-            ? (uint256(token0Reserve), uint256(token1Reserve))
-            : (uint256(token1Reserve), uint256(token0Reserve));
-
-        // Normalise by decimals
-        uint256 rawReserveA = reserveA / (10 ** tokenAdecimal);
-        uint256 rawReserveB = reserveB / (10 ** tokenBdecimal);
+        {
+            // Align reserves to tokenA / tokenB
+            (reserveA, reserveB) = (tokenA == IUniswapV2Pair(pair).token0())
+                ? (uint256(token0Reserve), uint256(token1Reserve))
+                : (uint256(token1Reserve), uint256(token0Reserve));
+        }
 
         uint256 lpTotalSupply = IUniswapV2Pair(pair).totalSupply();
 
-        if (rawReserveA < MINIMUM_RAW_RESERVE || rawReserveB < MINIMUM_RAW_RESERVE) result.LOW_LIQUIDITY = true;
+        {
+            uint256 rawReserveA = reserveA / (10 ** _safeDecimals(tokenA));
+            uint256 rawReserveB = reserveB / (10 ** _safeDecimals(tokenB));
+
+            if (rawReserveA < MINIMUM_RAW_RESERVE || rawReserveB < MINIMUM_RAW_RESERVE) result.LOW_LIQUIDITY = true;
+            if (_isSeverelyImbalanced(rawReserveA, rawReserveB)) result.SEVERE_IMBALANCE = true;
+        }
+
         if (lpTotalSupply < THRESHOLD_LP_SUPPLY) result.LOW_LP_SUPPLY = true;
         if (lpTotalSupply == 0) result.FIRST_DEPOSITOR_RISK = true;
 
-        if (_isSeverelyImbalanced(rawReserveA, rawReserveB)) result.SEVERE_IMBALANCE = true;
+        {
+            uint256 kLast = IUniswapV2Pair(pair).kLast();
+            if (kLast > 0 && uint256(token0Reserve) * uint256(token1Reserve) < kLast) {
+                result.K_INVARIANT_BROKEN = true;
+            }
+        }
 
-        uint256 kLast = IUniswapV2Pair(pair).kLast();
-        if (kLast > 0 && uint256(token0Reserve) * uint256(token1Reserve) < kLast) result.K_INVARIANT_BROKEN = true;
-
-        uint256 firstSeen = poolFirstSeenBlock[pair];
-        if (firstSeen != 0 && block.number - firstSeen < MIN_POOL_AGE_BLOCKS) result.POOL_TOO_NEW = true;
+        {
+            uint256 firstSeen = poolFirstSeenBlock[pair];
+            if (firstSeen != 0 && block.number - firstSeen < MIN_POOL_AGE_BLOCKS) {
+                result.POOL_TOO_NEW = true;
+            }
+        }
 
         if (uint32(block.timestamp) == lastBlockTimestamp) result.FLASHLOAN_RISK = true;
 
         if (operationType == LiquidityOperationType.ADD || operationType == LiquidityOperationType.ADD_ETH) {
-            // Amount ratio deviation vs pool ratio
-            if (amountADesired > 0 && amountBDesired > 0 && reserveA > 0 && reserveB > 0) {
-                // Pool ratio: B per A (scaled 1e18)
-                uint256 poolRatio = (reserveB * 1e18) / reserveA;
-                uint256 inputRatio = (amountBDesired * 1e18) / amountADesired;
-                uint256 delta = poolRatio > inputRatio ? poolRatio - inputRatio : inputRatio - poolRatio;
-                if ((delta * MAX_BPS) / poolRatio > MAX_RATIO_DEVIATION) result.AMOUNT_RATIO_DEVIATION = true;
-
-                // LP impact: does this deposit materially move the pool?
-                if ((amountADesired * MAX_BPS) / reserveA > MAX_LP_IMPACT_BPS) result.HIGH_LP_IMPACT = true;
-            }
-        }
-
-        // Operation-specific checks
-        if (operationType == LiquidityOperationType.ADD || operationType == LiquidityOperationType.ADD_ETH) {
-            _checkAdd(amountADesired, reserveA, lpTotalSupply, result);
+            _checkAdd(amountADesired, amountBDesired, reserveA, reserveB, lpTotalSupply, result);
         } else {
             _checkRemove(amountADesired, reserveA, reserveB, lpTotalSupply, result);
         }
@@ -348,14 +354,29 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
     /**
      * @dev Validates add-liquidity specific conditions.
      * @param amountA   Desired tokenA input amount.
-     * @param reserveA        Current pool reserveA aligned to tokenA.
+     * @param amountB   Desired tokenB input amount.
+     * @param reserveA  Current pool reserveA aligned to tokenA.
+     * @param reserveB  Current pool reserveB aligned to tokenB.
      * @param lpSupply  Current LP token total supply.
      * @param result    Result struct mutated in place.
      */
-    function _checkAdd(uint256 amountA, uint256 reserveA, uint256 lpSupply, LiquidityV2GuardResult memory result)
-        private
-        pure
-    {
+    function _checkAdd(
+        uint256 amountA,
+        uint256 amountB,
+        uint256 reserveA,
+        uint256 reserveB,
+        uint256 lpSupply,
+        LiquidityV2GuardResult memory result
+    ) private pure {
+        if (amountA > 0 && amountB > 0 && reserveA > 0 && reserveB > 0) {
+            uint256 poolRatio = (reserveB * 1e18) / reserveA;
+            uint256 inputRatio = (amountB * 1e18) / amountA;
+            uint256 delta = poolRatio > inputRatio ? poolRatio - inputRatio : inputRatio - poolRatio;
+            if ((delta * MAX_BPS) / poolRatio > MAX_RATIO_DEVIATION) result.AMOUNT_RATIO_DEVIATION = true;
+
+            if ((amountA * MAX_BPS) / reserveA > MAX_LP_IMPACT_BPS) result.HIGH_LP_IMPACT = true;
+        }
+
         if (lpSupply > 0 && reserveA > 0) {
             uint256 lpEst = (amountA * lpSupply) / reserveA;
             if (lpEst == 0) result.ZERO_LP_OUT = true;
