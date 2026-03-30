@@ -5,11 +5,40 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import {ITokenGuard, TokenGuardResult} from "./interfaces/ITokenGuard.sol";
 import {VaultOpType} from "../types/OffChainTypes.sol";
+import {VaultGuardLib} from "./lib/VaultGuardLib.sol";
+
+/// @notice Vault-specific on-chain findings emitted by the guard.
+struct VaultGuardResult {
+    // ----- Vault-level risks -----
+    bool VAULT_NOT_WHITELISTED; // vault not in operator whitelist
+    bool VAULT_ZERO_SUPPLY; // totalSupply == 0  (fresh vault)
+    bool DONATION_ATTACK; // zero-supply vault with large pre-loaded assets
+    bool SHARE_INFLATION_RISK; // assets/share ratio suspiciously large vs expected
+    bool VAULT_BALANCE_MISMATCH; // realBalance < totalAssets (vault is undercollateralised)
+    bool EXCHANGE_RATE_ANOMALY; // preview rate deviates > MAX_DEVIATION_BPS from vault rate
+    bool PREVIEW_REVERT; // preview function reverted (hostile vault)
+    // ----- Operation risks -----
+    bool ZERO_SHARES_OUT; // deposit would mint 0 shares
+    bool ZERO_ASSETS_OUT; // redeem would return 0 assets
+    bool DUST_SHARES; // shares below MIN_SHARES threshold
+    bool DUST_ASSETS; // assets below MIN_ASSETS threshold
+    bool EXCEEDS_MAX_DEPOSIT; // amount > vault.maxDeposit(user)
+    bool EXCEEDS_MAX_REDEEM; // amount > vault.maxRedeem(user)
+    bool PREVIEW_CONVERT_MISMATCH; // previewDeposit vs convertToShares disagree > tolerance
+    // ----- Token risks -----
+    TokenGuardResult tokenResult;
+}
+
+/// @notice Fingerprint and preview data stored for same-block validation.
+struct StoredUserCheck {
+    uint48 packedResult;
+    uint256 previewShares;
+    uint256 previewAssets;
+}
 
 /**
  * @title  ERC4626VaultGuard
@@ -22,37 +51,9 @@ import {VaultOpType} from "../types/OffChainTypes.sol";
  *   - Token-level: all TokenGuard checks on the vault's asset
  *
  */
-contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
+
+contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
-
-    /// @notice Vault-specific on-chain findings emitted by the guard.
-    struct VaultGuardResult {
-        // ----- Vault-level risks -----
-        bool VAULT_NOT_WHITELISTED; // vault not in operator whitelist
-        bool VAULT_ZERO_SUPPLY; // totalSupply == 0  (fresh vault)
-        bool DONATION_ATTACK; // zero-supply vault with large pre-loaded assets
-        bool SHARE_INFLATION_RISK; // assets/share ratio suspiciously large vs expected
-        bool VAULT_BALANCE_MISMATCH; // realBalance < totalAssets (vault is undercollateralised)
-        bool EXCHANGE_RATE_ANOMALY; // preview rate deviates > MAX_DEVIATION_BPS from vault rate
-        bool PREVIEW_REVERT; // preview function reverted (hostile vault)
-        // ----- Operation risks -----
-        bool ZERO_SHARES_OUT; // deposit would mint 0 shares
-        bool ZERO_ASSETS_OUT; // redeem would return 0 assets
-        bool DUST_SHARES; // shares below MIN_SHARES threshold
-        bool DUST_ASSETS; // assets below MIN_ASSETS threshold
-        bool EXCEEDS_MAX_DEPOSIT; // amount > vault.maxDeposit(user)
-        bool EXCEEDS_MAX_REDEEM; // amount > vault.maxRedeem(user)
-        bool PREVIEW_CONVERT_MISMATCH; // previewDeposit vs convertToShares disagree > tolerance
-        // ----- Token risks -----
-        TokenGuardResult tokenResult;
-    }
-
-    /// @notice Fingerprint and preview data stored for same-block validation.
-    struct StoredUserCheck {
-        uint48 packedResult;
-        uint256 previewShares;
-        uint256 previewAssets;
-    }
 
     // CONSTANTS //
 
@@ -93,23 +94,13 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
         _;
     }
 
-    constructor() {
-        _disableInitializers();
-    }
-
     /**
-     * @notice Initializes the upgradeable vault guard.
+     * @notice Initializes the  vault guard.
      * @param _tokenGuard Address of the TokenGuard contract used for asset checks.
      */
-    function initialize(address _tokenGuard) public initializer {
-        __Ownable_init();
-        __UUPSUpgradeable_init();
-        __ReentrancyGuard_init();
+    constructor(address _tokenGuard) {
         tokenGuard = ITokenGuard(_tokenGuard);
     }
-
-    /// @dev Authorizes UUPS upgrades through the contract owner.
-    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // OWNER-ONLY FUNCTIONS
 
@@ -192,7 +183,7 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
         returns (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets, uint256 blockNumber)
     {
         StoredUserCheck memory userCheck = lastCheckPacked[vault][user];
-        result = _unpacked(userCheck.packedResult);
+        result = VaultGuardLib.unpacked(userCheck.packedResult);
         previewShares = userCheck.previewShares;
         previewAssets = userCheck.previewAssets;
         blockNumber = lastCheckBlock[vault][user];
@@ -253,8 +244,9 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
         (VaultGuardResult memory guardResult, uint256 pShares, uint256 pAssets) =
             _checkVault(vault, amount, opType, user);
 
-        lastCheckPacked[vault][user] =
-            StoredUserCheck({packedResult: _packed(guardResult), previewShares: pShares, previewAssets: pAssets});
+        lastCheckPacked[vault][user] = StoredUserCheck({
+            packedResult: VaultGuardLib.packed(guardResult), previewShares: pShares, previewAssets: pAssets
+        });
 
         lastCheckBlock[vault][user] = block.number;
 
@@ -488,8 +480,9 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
 
         (VaultGuardResult memory result, uint256 pShares, uint256 pAssets) = _checkVault(vault, amount, opType, user);
 
-        StoredUserCheck memory currentCheck =
-            StoredUserCheck({packedResult: _packed(result), previewShares: pShares, previewAssets: pAssets});
+        StoredUserCheck memory currentCheck = StoredUserCheck({
+            packedResult: VaultGuardLib.packed(result), previewShares: pShares, previewAssets: pAssets
+        });
         StoredUserCheck memory storedCheck = lastCheckPacked[vault][user];
 
         bytes32 currentFingerprint = keccak256(abi.encode(currentCheck));
@@ -499,108 +492,6 @@ contract ERC4626VaultGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGua
     }
 
     // INTERNAL HELPER FUNCTIONS
-
-    function _packed(VaultGuardResult memory vaultReport) internal pure returns (uint48 result) {
-        if (vaultReport.VAULT_NOT_WHITELISTED) result |= uint48(1) << 0;
-        if (vaultReport.VAULT_ZERO_SUPPLY) result |= uint48(1) << 1;
-        if (vaultReport.DONATION_ATTACK) result |= uint48(1) << 2;
-        if (vaultReport.SHARE_INFLATION_RISK) result |= uint48(1) << 3;
-        if (vaultReport.VAULT_BALANCE_MISMATCH) result |= uint48(1) << 4;
-        if (vaultReport.EXCHANGE_RATE_ANOMALY) result |= uint48(1) << 5;
-        if (vaultReport.PREVIEW_REVERT) result |= uint48(1) << 6;
-        if (vaultReport.ZERO_SHARES_OUT) result |= uint48(1) << 7;
-        if (vaultReport.ZERO_ASSETS_OUT) result |= uint48(1) << 8;
-        if (vaultReport.DUST_SHARES) result |= uint48(1) << 9;
-        if (vaultReport.DUST_ASSETS) result |= uint48(1) << 10;
-        if (vaultReport.EXCEEDS_MAX_DEPOSIT) result |= uint48(1) << 11;
-        if (vaultReport.EXCEEDS_MAX_REDEEM) result |= uint48(1) << 12;
-        if (vaultReport.PREVIEW_CONVERT_MISMATCH) result |= uint48(1) << 13;
-
-        TokenGuardResult memory tokenReport = vaultReport.tokenResult;
-
-        if (tokenReport.NOT_A_CONTRACT) result |= uint48(1) << 14;
-        if (tokenReport.EMPTY_BYTECODE) result |= uint48(1) << 15;
-        if (tokenReport.DECIMALS_REVERT) result |= uint48(1) << 16;
-        if (tokenReport.WEIRD_DECIMALS) result |= uint48(1) << 17;
-        if (tokenReport.HIGH_DECIMALS) result |= uint48(1) << 18;
-        if (tokenReport.TOTAL_SUPPLY_REVERT) result |= uint48(1) << 19;
-        if (tokenReport.ZERO_TOTAL_SUPPLY) result |= uint48(1) << 20;
-        if (tokenReport.VERY_LOW_TOTAL_SUPPLY) result |= uint48(1) << 21;
-        if (tokenReport.SYMBOL_REVERT) result |= uint48(1) << 22;
-        if (tokenReport.NAME_REVERT) result |= uint48(1) << 23;
-        if (tokenReport.IS_EIP1967_PROXY) result |= uint48(1) << 24;
-        if (tokenReport.IS_EIP1822_PROXY) result |= uint48(1) << 25;
-        if (tokenReport.IS_MINIMAL_PROXY) result |= uint48(1) << 26;
-        if (tokenReport.HAS_OWNER) result |= uint48(1) << 27;
-        if (tokenReport.OWNERSHIP_RENOUNCED) result |= uint48(1) << 28;
-        if (tokenReport.OWNER_IS_EOA) result |= uint48(1) << 29;
-        if (tokenReport.IS_PAUSABLE) result |= uint48(1) << 30;
-        if (tokenReport.IS_CURRENTLY_PAUSED) result |= uint48(1) << 31;
-        if (tokenReport.HAS_BLACKLIST) result |= uint48(1) << 32;
-        if (tokenReport.HAS_BLOCKLIST) result |= uint48(1) << 33;
-        if (tokenReport.POSSIBLE_FEE_ON_TRANSFER) result |= uint48(1) << 34;
-        if (tokenReport.HAS_TRANSFER_FEE_GETTER) result |= uint48(1) << 35;
-        if (tokenReport.HAS_TAX_FUNCTION) result |= uint48(1) << 36;
-        if (tokenReport.POSSIBLE_REBASING) result |= uint48(1) << 37;
-        if (tokenReport.HAS_MINT_CAPABILITY) result |= uint48(1) << 38;
-        if (tokenReport.HAS_BURN_CAPABILITY) result |= uint48(1) << 39;
-        if (tokenReport.HAS_PERMIT) result |= uint48(1) << 40;
-        if (tokenReport.HAS_FLASH_MINT) result |= uint48(1) << 41;
-
-        return result;
-    }
-
-    function _unpacked(uint48 packed) internal pure returns (VaultGuardResult memory result) {
-        result.VAULT_NOT_WHITELISTED = (packed >> 0) & 1 == 1;
-        result.VAULT_ZERO_SUPPLY = (packed >> 1) & 1 == 1;
-        result.DONATION_ATTACK = (packed >> 2) & 1 == 1;
-        result.SHARE_INFLATION_RISK = (packed >> 3) & 1 == 1;
-        result.VAULT_BALANCE_MISMATCH = (packed >> 4) & 1 == 1;
-        result.EXCHANGE_RATE_ANOMALY = (packed >> 5) & 1 == 1;
-        result.PREVIEW_REVERT = (packed >> 6) & 1 == 1;
-        result.ZERO_SHARES_OUT = (packed >> 7) & 1 == 1;
-        result.ZERO_ASSETS_OUT = (packed >> 8) & 1 == 1;
-        result.DUST_SHARES = (packed >> 9) & 1 == 1;
-        result.DUST_ASSETS = (packed >> 10) & 1 == 1;
-        result.EXCEEDS_MAX_DEPOSIT = (packed >> 11) & 1 == 1;
-        result.EXCEEDS_MAX_REDEEM = (packed >> 12) & 1 == 1;
-        result.PREVIEW_CONVERT_MISMATCH = (packed >> 13) & 1 == 1;
-
-        TokenGuardResult memory _tokenReport;
-
-        _tokenReport.NOT_A_CONTRACT = (packed >> 14) & 1 == 1;
-        _tokenReport.EMPTY_BYTECODE = (packed >> 15) & 1 == 1;
-        _tokenReport.DECIMALS_REVERT = (packed >> 16) & 1 == 1;
-        _tokenReport.WEIRD_DECIMALS = (packed >> 17) & 1 == 1;
-        _tokenReport.HIGH_DECIMALS = (packed >> 18) & 1 == 1;
-        _tokenReport.TOTAL_SUPPLY_REVERT = (packed >> 19) & 1 == 1;
-        _tokenReport.ZERO_TOTAL_SUPPLY = (packed >> 20) & 1 == 1;
-        _tokenReport.VERY_LOW_TOTAL_SUPPLY = (packed >> 21) & 1 == 1;
-        _tokenReport.SYMBOL_REVERT = (packed >> 22) & 1 == 1;
-        _tokenReport.NAME_REVERT = (packed >> 23) & 1 == 1;
-        _tokenReport.IS_EIP1967_PROXY = (packed >> 24) & 1 == 1;
-        _tokenReport.IS_EIP1822_PROXY = (packed >> 25) & 1 == 1;
-        _tokenReport.IS_MINIMAL_PROXY = (packed >> 26) & 1 == 1;
-        _tokenReport.HAS_OWNER = (packed >> 27) & 1 == 1;
-        _tokenReport.OWNERSHIP_RENOUNCED = (packed >> 28) & 1 == 1;
-        _tokenReport.OWNER_IS_EOA = (packed >> 29) & 1 == 1;
-        _tokenReport.IS_PAUSABLE = (packed >> 30) & 1 == 1;
-        _tokenReport.IS_CURRENTLY_PAUSED = (packed >> 31) & 1 == 1;
-        _tokenReport.HAS_BLACKLIST = (packed >> 32) & 1 == 1;
-        _tokenReport.HAS_BLOCKLIST = (packed >> 33) & 1 == 1;
-        _tokenReport.POSSIBLE_FEE_ON_TRANSFER = (packed >> 34) & 1 == 1;
-        _tokenReport.HAS_TRANSFER_FEE_GETTER = (packed >> 35) & 1 == 1;
-        _tokenReport.HAS_TAX_FUNCTION = (packed >> 36) & 1 == 1;
-        _tokenReport.POSSIBLE_REBASING = (packed >> 37) & 1 == 1;
-        _tokenReport.HAS_MINT_CAPABILITY = (packed >> 38) & 1 == 1;
-        _tokenReport.HAS_BURN_CAPABILITY = (packed >> 39) & 1 == 1;
-        _tokenReport.HAS_PERMIT = (packed >> 40) & 1 == 1;
-        _tokenReport.HAS_FLASH_MINT = (packed >> 41) & 1 == 1;
-
-        result.tokenResult = _tokenReport;
-
-        return result;
-    }
 
     function _safeDecimals(address token) internal view returns (uint8) {
         try IERC20Metadata(token).decimals() returns (uint8 d) {

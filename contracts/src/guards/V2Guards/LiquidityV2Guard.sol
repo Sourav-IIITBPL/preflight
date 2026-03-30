@@ -4,9 +4,8 @@ pragma solidity ^0.8.20;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import {ITokenGuard, TokenGuardResult} from "../interfaces/ITokenGuard.sol";
 import {IUniswapV2Factory, IUniswapV2Pair, IUniswapV2Router} from "../interfaces/IUniswapV2Interfaces.sol";
 
@@ -33,7 +32,7 @@ import {IUniswapV2Factory, IUniswapV2Pair, IUniswapV2Router} from "../interfaces
  *      Hard-block flags are always re-evaluated regardless of stored state.
  */
 
-contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
+contract LiquidityGuard is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     //  Result struct
@@ -67,7 +66,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      */
 
     /// @notice Identifies the Uniswap V2 liquidity operation under review.
-    enum LiquidityOperationType {
+    enum LiquidityOpType {
         ADD,
         ADD_ETH,
         REMOVE,
@@ -99,9 +98,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
     /// @dev user => router => block number of last stored check.
     mapping(address => mapping(address => uint256)) public lastCheckBlock;
 
-    event LiquidityCheckPerformed(
-        address indexed user, address tokenA, address tokenB, LiquidityOperationType operationType
-    );
+    event LiquidityCheckPerformed(address indexed user, address tokenA, address tokenB, LiquidityOpType operationType);
     /// @notice Emitted when a user's liquidity check is stored for same-block validation.
     event CheckStored(address indexed user, address indexed router, uint256 blockNumber);
     /// @notice Emitted when a trusted router entry is updated.
@@ -115,23 +112,13 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         _;
     }
 
-    constructor() {
-        _disableInitializers();
-    }
-
     /**
-     * @notice UUPS initializer.
+     * @notice constructor.
      * @param _tokenGuard Address of the deployed TokenGuard contract.
      */
-    function initialize(address _tokenGuard) public initializer {
-        __Ownable_init();
-        __UUPSUpgradeable_init();
-        __ReentrancyGuard_init();
+    constructor(address _tokenGuard) {
         tokenGuard = ITokenGuard(_tokenGuard);
     }
-
-    /// @dev Authorizes UUPS upgrades through the contract owner.
-    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /// ADMIN FUNCTION ///
     /**
@@ -173,7 +160,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         address tokenB,
         uint256 amountADesired,
         uint256 amountBDesired,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external returns (LiquidityV2GuardResult memory result) {
         emit LiquidityCheckPerformed(user, tokenA, tokenB, operationType);
         return _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
@@ -198,7 +185,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         uint256 amountADesired,
         uint256 amountBDesired,
         address user,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external nonReentrant onlyTrustedCaller returns (LiquidityV2GuardResult memory result) {
         result = _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
         storedUserChecksPerRouter[user][router] = _packed(result);
@@ -226,7 +213,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         uint256 amountADesired,
         uint256 amountBDesired,
         address user,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external view {
         require(lastCheckBlock[user][router] == block.number, "STALE_LIQ_CHECK");
         LiquidityV2GuardResult memory currentResult =
@@ -270,7 +257,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         address tokenB,
         uint256 amountADesired,
         uint256 amountBDesired,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) internal view returns (LiquidityV2GuardResult memory result) {
         if (!trustedRouters[router]) {
             result.ROUTER_NOT_TRUSTED = true;
@@ -350,7 +337,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
 
         if (uint32(block.timestamp) == lastBlockTimestamp) result.FLASHLOAN_RISK = true;
 
-        if (operationType == LiquidityOperationType.ADD || operationType == LiquidityOperationType.ADD_ETH) {
+        if (operationType == LiquidityOpType.ADD || operationType == LiquidityOpType.ADD_ETH) {
             _checkAdd(amountADesired, amountBDesired, reserveA, reserveB, lpTotalSupply, result);
         } else {
             _checkRemove(amountADesired, reserveA, reserveB, lpTotalSupply, result);

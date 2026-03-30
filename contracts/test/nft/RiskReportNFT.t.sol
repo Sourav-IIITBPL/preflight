@@ -3,16 +3,19 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 
-import {RiskReportNFT} from "../../src/RiskReportNFT.sol";
+import {RiskReportNFT} from "../../src/nftReport/RiskReportNFT.sol";
+import {SVGRenderer} from "../../src/nftReport/SVGRenderer.sol";
 
 contract RiskReportNFTTest is Test {
     RiskReportNFT internal nft;
+    SVGRenderer internal renderer;
 
     address internal minter = address(0xA11CE);
     address internal recipient = address(0xB0B);
 
     function setUp() public {
-        nft = new RiskReportNFT();
+        renderer = new SVGRenderer();
+        nft = new RiskReportNFT(address(renderer));
     }
 
     function test_setAuthorizedMinterRevertsForZeroAddress() public {

@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @notice Enumerates the guarded Uniswap V2 liquidity operations used on-chain.
-enum LiquidityOperationType {
-    ADD,
-    ADD_ETH,
-    REMOVE,
-    REMOVE_ETH
-}
-
 /// @notice Canonical on-chain risk flags produced by the ERC-4626 vault guard.
 struct VaultGuardResult {
     bool VAULT_NOT_WHITELISTED;

@@ -8,7 +8,7 @@ import {ReentrancyGuard} from "../../../lib/openzeppelin-contracts/contracts/sec
 
 import {ILiquidityV2Guard} from "../interfaces/IGuards.sol";
 import {IUniswapV2Factory, IUniswapV2Router} from "../interfaces/IUniswapV2Interface.sol";
-import {LiquidityV2GuardResult, LiquidityOperationType} from "../../types/OnChainTypes.sol";
+import {LiquidityV2GuardResult} from "../../types/OnChainTypes.sol";
 import {ILiquidityV2RiskPolicy, IRiskReportNFT} from "../interfaces/IRiskPolicy.sol";
 import {LiquidityOpType} from "../../types/OffChainTypes.sol";
 import {LiquidityV2DecodedRiskReport} from "../../riskpolicies/LiquidityV2RiskPolicy.sol";
@@ -125,7 +125,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
     event LiquidityCheckStored(
         address indexed user,
         address indexed ammRouter,
-        LiquidityOperationType operation,
+        LiquidityOpType operation,
         address tokenA,
         address tokenB,
         uint256 amountA,
@@ -134,7 +134,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
     );
     /// @notice Emitted after a guarded liquidity operation executes successfully.
     event GuardedLiquidityExecuted(
-        address indexed user, address indexed ammRouter, address indexed recipient, LiquidityOperationType operation
+        address indexed user, address indexed ammRouter, address indexed recipient, LiquidityOpType operation
     );
 
     /**
@@ -193,81 +193,25 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Previews a guarded add-liquidity check for an ERC-20/ERC-20 pair.
+     * @notice Previews a guarded liquidity check for an ERC-20/ERC-20 pair.
      * @param ammRouter Address of the AMM router.
      * @param tokenA Address of token A.
      * @param tokenB Address of token B.
      * @param amountADesired Desired amount of token A.
      * @param amountBDesired Desired amount of token B.
+     * @param operationType Type of liquidity operation being previewed (add or remove).
      * @return result Guard result for the requested add-liquidity flow.
      */
-    function previewGuardedAddLiquidity(
+    function guardedPreview(
         address ammRouter,
         address tokenA,
         address tokenB,
         uint256 amountADesired,
-        uint256 amountBDesired
+        uint256 amountBDesired,
+        LiquidityOpType operationType
     ) external returns (LiquidityV2GuardResult memory result) {
         result = liquidityGuard.checkLiquidity(
-            msg.sender, ammRouter, tokenA, tokenB, amountADesired, amountBDesired, LiquidityOperationType.ADD
-        );
-    }
-
-    /**
-     * @notice Previews a guarded add-liquidity check for a token/ETH pair.
-     * @param ammRouter Address of the AMM router.
-     * @param token Address of the ERC-20 token.
-     * @param amountTokenDesired Desired token amount.
-     * @param amountETHDesired Desired ETH amount.
-     * @return result Guard result for the requested add-liquidity flow.
-     */
-    function previewGuardedAddLiquidityETH(
-        address ammRouter,
-        address token,
-        uint256 amountTokenDesired,
-        uint256 amountETHDesired
-    ) external returns (LiquidityV2GuardResult memory result) {
-        result = liquidityGuard.checkLiquidity(
-            msg.sender,
-            ammRouter,
-            token,
-            address(0),
-            amountTokenDesired,
-            amountETHDesired,
-            LiquidityOperationType.ADD_ETH
-        );
-    }
-
-    /**
-     * @notice Previews a guarded remove-liquidity check for an ERC-20/ERC-20 pair.
-     * @param ammRouter Address of the AMM router.
-     * @param tokenA Address of token A.
-     * @param tokenB Address of token B.
-     * @param lpAmountToBurn LP token amount to burn.
-     * @return result Guard result for the requested remove-liquidity flow.
-     */
-    function previewGuardedRemoveLiquidity(address ammRouter, address tokenA, address tokenB, uint256 lpAmountToBurn)
-        external
-        returns (LiquidityV2GuardResult memory result)
-    {
-        result = liquidityGuard.checkLiquidity(
-            msg.sender, ammRouter, tokenA, tokenB, lpAmountToBurn, 0, LiquidityOperationType.REMOVE
-        );
-    }
-
-    /**
-     * @notice Previews a guarded remove-liquidity check for a token/ETH pair.
-     * @param ammRouter Address of the AMM router.
-     * @param token Address of the ERC-20 token.
-     * @param lpAmountToBurn LP token amount to burn.
-     * @return result Guard result for the requested remove-liquidity flow.
-     */
-    function previewGuardedRemoveLiquidityETH(address ammRouter, address token, uint256 lpAmountToBurn)
-        external
-        returns (LiquidityV2GuardResult memory result)
-    {
-        result = liquidityGuard.checkLiquidity(
-            msg.sender, ammRouter, token, address(0), lpAmountToBurn, 0, LiquidityOperationType.REMOVE_ETH
+            msg.sender, ammRouter, tokenA, tokenB, amountADesired, amountBDesired, operationType
         );
     }
 
@@ -278,6 +222,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
      * @param tokenB Address of token B.
      * @param amountADesired Desired amount of token A.
      * @param amountBDesired Desired amount of token B.
+     * @param operationType Type of liquidity operation being checked (add or remove).
      * @param offChainData ABI-encoded off-chain simulation data.
      * @return packedRiskReport Packed risk report for the operation.
      */
@@ -287,122 +232,17 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
         address tokenB,
         uint256 amountADesired,
         uint256 amountBDesired,
+        LiquidityOpType operationType,
         bytes calldata offChainData
     ) external nonReentrant returns (uint256 packedRiskReport) {
         LiquidityV2GuardResult memory result = liquidityGuard.storeCheck(
-            ammRouter, tokenA, tokenB, amountADesired, amountBDesired, msg.sender, LiquidityOperationType.ADD
+            ammRouter, tokenA, tokenB, amountADesired, amountBDesired, msg.sender, operationType
         );
-        packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.ADD);
+        packedRiskReport = riskPolicy.evaluate(offChainData, result, operationType);
         riskReportNFT.mint(packedRiskReport, msg.sender);
 
         emit LiquidityCheckStored(
-            msg.sender,
-            ammRouter,
-            LiquidityOperationType.ADD,
-            tokenA,
-            tokenB,
-            amountADesired,
-            amountBDesired,
-            packedRiskReport
-        );
-    }
-
-    /**
-     * @notice Stores an add-liquidity-ETH check, evaluates risk, and mints the report NFT.
-     * @param ammRouter Address of the AMM router.
-     * @param token Address of the ERC-20 token.
-     * @param amountTokenDesired Desired token amount.
-     * @param amountETHDesired Desired ETH amount.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the operation.
-     */
-    function storeAndMintAddLiquidityETHCheck(
-        address ammRouter,
-        address token,
-        uint256 amountTokenDesired,
-        uint256 amountETHDesired,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        LiquidityV2GuardResult memory result = liquidityGuard.storeCheck(
-            ammRouter,
-            token,
-            address(0),
-            amountTokenDesired,
-            amountETHDesired,
-            msg.sender,
-            LiquidityOperationType.ADD_ETH
-        );
-        packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.ADD_ETH);
-        riskReportNFT.mint(packedRiskReport, msg.sender);
-
-        emit LiquidityCheckStored(
-            msg.sender,
-            ammRouter,
-            LiquidityOperationType.ADD_ETH,
-            token,
-            address(0),
-            amountTokenDesired,
-            amountETHDesired,
-            packedRiskReport
-        );
-    }
-
-    /**
-     * @notice Stores a remove-liquidity check, evaluates risk, and mints the report NFT.
-     * @param ammRouter Address of the AMM router.
-     * @param tokenA Address of token A.
-     * @param tokenB Address of token B.
-     * @param lpAmountToBurn LP token amount to burn.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the operation.
-     */
-    function storeAndMintRemoveLiquidityCheck(
-        address ammRouter,
-        address tokenA,
-        address tokenB,
-        uint256 lpAmountToBurn,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        LiquidityV2GuardResult memory result = liquidityGuard.storeCheck(
-            ammRouter, tokenA, tokenB, lpAmountToBurn, 0, msg.sender, LiquidityOperationType.REMOVE
-        );
-        packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.REMOVE);
-        riskReportNFT.mint(packedRiskReport,msg.sender);
-
-        emit LiquidityCheckStored(
-            msg.sender, ammRouter, LiquidityOperationType.REMOVE, tokenA, tokenB, lpAmountToBurn, 0, packedRiskReport
-        );
-    }
-
-    /**
-     * @notice Stores a remove-liquidity-ETH check, evaluates risk, and mints the report NFT.
-     * @param ammRouter Address of the AMM router.
-     * @param token Address of the ERC-20 token.
-     * @param lpAmountToBurn LP token amount to burn.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return packedRiskReport Packed risk report for the operation.
-     */
-    function storeAndMintRemoveLiquidityETHCheck(
-        address ammRouter,
-        address token,
-        uint256 lpAmountToBurn,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 packedRiskReport) {
-        LiquidityV2GuardResult memory result = liquidityGuard.storeCheck(
-            ammRouter, token, address(0), lpAmountToBurn, 0, msg.sender, LiquidityOperationType.REMOVE_ETH
-        );
-        packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.REMOVE_ETH);
-        riskReportNFT.mint(packedRiskReport,msg.sender);
-
-        emit LiquidityCheckStored(
-            msg.sender,
-            ammRouter,
-            LiquidityOperationType.REMOVE_ETH,
-            token,
-            address(0),
-            lpAmountToBurn,
-            0,
-            packedRiskReport
+            msg.sender, ammRouter, operationType, tokenA, tokenB, amountADesired, amountBDesired, packedRiskReport
         );
     }
 
@@ -428,7 +268,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             params.amountADesired,
             params.amountBDesired,
             msg.sender,
-            LiquidityOperationType.ADD
+            LiquidityOpType.ADD
         );
 
         IERC20(params.tokenA).safeTransferFrom(msg.sender, address(this), params.amountADesired);
@@ -458,7 +298,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             IERC20(params.tokenB).safeTransfer(params.refundRecipient, params.amountBDesired - amountBUsed);
         }
 
-        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.lpRecipient, LiquidityOperationType.ADD);
+        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.lpRecipient, LiquidityOpType.ADD);
     }
 
     /**
@@ -490,7 +330,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             params.amountTokenDesired,
             msg.value,
             msg.sender,
-            LiquidityOperationType.ADD_ETH
+            LiquidityOpType.ADD_ETH
         );
 
         IERC20(params.token).safeTransferFrom(msg.sender, address(this), params.amountTokenDesired);
@@ -517,7 +357,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             require(success, "ETH_REFUND_FAILED");
         }
 
-        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.lpRecipient, LiquidityOperationType.ADD_ETH);
+        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.lpRecipient, LiquidityOpType.ADD_ETH);
     }
 
     /**
@@ -525,23 +365,16 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
      * @param params Encoded remove-liquidity parameters.
      * @return amountAOut Amount of token A received.
      * @return amountBOut Amount of token B received.
-     * @return packedRiskReport Packed risk report placeholder returned by the function signature.
      */
     function guardedRemoveLiquidity(RemoveLiquidityParams calldata params)
         external
         nonReentrant
-        returns (uint256 amountAOut, uint256 amountBOut, uint256 packedRiskReport)
+        returns (uint256 amountAOut, uint256 amountBOut)
     {
         _validateRecipient(params.tokenRecipient);
 
         liquidityGuard.validateCheck(
-            params.ammRouter,
-            params.tokenA,
-            params.tokenB,
-            params.lpAmountToBurn,
-            0,
-            msg.sender,
-            LiquidityOperationType.REMOVE
+            params.ammRouter, params.tokenA, params.tokenB, params.lpAmountToBurn, 0, msg.sender, LiquidityOpType.REMOVE
         );
 
         address pair = _getPair(params.ammRouter, params.tokenA, params.tokenB);
@@ -562,9 +395,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
 
         IERC20(pair).forceApprove(params.ammRouter, 0);
 
-        emit GuardedLiquidityExecuted(
-            msg.sender, params.ammRouter, params.tokenRecipient, LiquidityOperationType.REMOVE
-        );
+        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.tokenRecipient, LiquidityOpType.REMOVE);
     }
 
     /**
@@ -572,23 +403,16 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
      * @param params Encoded remove-liquidity-ETH parameters.
      * @return tokenOut Amount of tokens received.
      * @return ethOut Amount of ETH received.
-     * @return packedRiskReport Packed risk report placeholder returned by the function signature.
      */
     function guardedRemoveLiquidityETH(RemoveLiquidityETHParams calldata params)
         external
         nonReentrant
-        returns (uint256 tokenOut, uint256 ethOut, uint256 packedRiskReport)
+        returns (uint256 tokenOut, uint256 ethOut)
     {
         _validateRecipient(params.recipient);
 
         liquidityGuard.validateCheck(
-            params.ammRouter,
-            params.token,
-            address(0),
-            params.lpAmountToBurn,
-            0,
-            msg.sender,
-            LiquidityOperationType.REMOVE_ETH
+            params.ammRouter, params.token, address(0), params.lpAmountToBurn, 0, msg.sender, LiquidityOpType.REMOVE_ETH
         );
 
         address weth = IUniswapV2Router(params.ammRouter).WETH();
@@ -609,7 +433,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
 
         IERC20(pair).forceApprove(params.ammRouter, 0);
 
-        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.recipient, LiquidityOperationType.REMOVE_ETH);
+        emit GuardedLiquidityExecuted(msg.sender, params.ammRouter, params.recipient, LiquidityOpType.REMOVE_ETH);
     }
 
     /**

@@ -17,7 +17,7 @@ interface IRiskReportNFT {
      * @param packedRiskReport Packed risk report value.
      * @return tokenId Minted NFT identifier.
      */
-    function mint(uint256 packedRiskReport,address recipient) external returns (uint256 tokenId);
+    function mint(uint256 packedRiskReport, address recipient) external returns (uint256 tokenId);
 }
 
 /**

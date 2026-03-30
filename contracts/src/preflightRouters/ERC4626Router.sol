@@ -224,16 +224,13 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param assetAmount Amount of assets to deposit.
      * @param receiver Address receiving minted shares.
      * @param minSharesOut Minimum acceptable shares out.
-     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return sharesOut Amount of shares received and minted.
      */
-    function guardedDeposit(
-        address vault,
-        uint256 assetAmount,
-        address receiver,
-        uint256 minSharesOut,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 sharesOut) {
+    function guardedDeposit(address vault, uint256 assetAmount, address receiver, uint256 minSharesOut)
+        external
+        nonReentrant
+        returns (uint256 sharesOut)
+    {
         if (receiver == address(0)) {
             revert InvalidReceiver();
         }
@@ -269,16 +266,13 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param shareAmount Amount of shares to mint.
      * @param receiver Address receiving minted shares.
      * @param minAssetsOut Lower-bound check applied to the returned `assetsOut` value in the current implementation.
-     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return assetsOut Amount of assets consumed by the mint operation.
      */
-    function guardedMint(
-        address vault,
-        uint256 shareAmount,
-        address receiver,
-        uint256 minAssetsOut,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 assetsOut) {
+    function guardedMint(address vault, uint256 shareAmount, address receiver, uint256 minAssetsOut)
+        external
+        nonReentrant
+        returns (uint256 assetsOut)
+    {
         if (receiver == address(0)) {
             revert InvalidReceiver();
         }
@@ -319,16 +313,13 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param shareAmount Amount of shares to redeem and burn.
      * @param receiver Address receiving redeemed assets.
      * @param minAssetsOut Minimum acceptable assets out.
-     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return assetsOut Amount of assets received.
      */
-    function guardedRedeem(
-        address vault,
-        uint256 shareAmount,
-        address receiver,
-        uint256 minAssetsOut,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 assetsOut) {
+    function guardedRedeem(address vault, uint256 shareAmount, address receiver, uint256 minAssetsOut)
+        external
+        nonReentrant
+        returns (uint256 assetsOut)
+    {
         if (receiver == address(0)) {
             revert InvalidReceiver();
         }
@@ -359,16 +350,13 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param assetAmount Amount of assets to withdraw.
      * @param receiver Address receiving withdrawn assets.
      * @param minSharesOut Lower-bound check applied to the returned `sharesOut` value in the current implementation.
-     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return sharesOut Amount of shares burned.
      */
-    function guardedWithdraw(
-        address vault,
-        uint256 assetAmount,
-        address receiver,
-        uint256 minSharesOut,
-        bytes calldata offChainData
-    ) external nonReentrant returns (uint256 sharesOut) {
+    function guardedWithdraw(address vault, uint256 assetAmount, address receiver, uint256 minSharesOut)
+        external
+        nonReentrant
+        returns (uint256 sharesOut)
+    {
         if (receiver == address(0)) {
             revert InvalidReceiver();
         }

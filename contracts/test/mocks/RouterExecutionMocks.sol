@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {PolicyKind, TokenGuardResult, VaultGuardResult, SwapV2GuardResult, LiquidityV2GuardResult, LiquidityOperationType} from "../../src/types/OnChainTypes.sol";
+import {
+    PolicyKind,
+    TokenGuardResult,
+    VaultGuardResult,
+    SwapV2GuardResult,
+    LiquidityV2GuardResult
+} from "../../src/types/OnChainTypes.sol";
 import {VaultOpType, SwapOpType, LiquidityOpType} from "../../src/types/OffChainTypes.sol";
 import {IUniswapV2Factory} from "../../src/preflightRouters/interfaces/IUniswapV2Interface.sol";
 import {ERC4626DecodedRiskReport} from "../../src/riskpolicies/ERC4626RiskPolicy.sol";
@@ -153,7 +159,9 @@ contract MockERC4626Guard {
     uint256 public lastAmount;
     VaultOpType public lastOperation;
 
-    function setConfiguredResult(VaultGuardResult calldata result_, uint256 previewShares_, uint256 previewAssets_) external {
+    function setConfiguredResult(VaultGuardResult calldata result_, uint256 previewShares_, uint256 previewAssets_)
+        external
+    {
         _configuredResult = result_;
         configuredPreviewShares = previewShares_;
         configuredPreviewAssets = previewAssets_;
@@ -298,10 +306,13 @@ contract MockSwapV2Guard {
         return _configuredResult;
     }
 
-    function validateSwapCheck(address router, address[] calldata path, uint256 amount, bool isExactTokenIn, address user)
-        external
-        view
-    {
+    function validateSwapCheck(
+        address router,
+        address[] calldata path,
+        uint256 amount,
+        bool isExactTokenIn,
+        address user
+    ) external view {
         router;
         path;
         amount;
@@ -356,7 +367,7 @@ contract MockLiquidityV2Guard {
     uint256 public lastAmountA;
     uint256 public lastAmountB;
     address public lastUser;
-    LiquidityOperationType public lastOperationType;
+    LiquidityOpType public lastOperationType;
 
     function setValidateShouldRevert(bool shouldRevert) external {
         validateShouldRevert = shouldRevert;
@@ -369,7 +380,7 @@ contract MockLiquidityV2Guard {
         address tokenB,
         uint256 amountADesired,
         uint256 amountBDesired,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external returns (LiquidityV2GuardResult memory result) {
         lastUser = user;
         lastRouter = router;
@@ -388,7 +399,7 @@ contract MockLiquidityV2Guard {
         uint256 amountADesired,
         uint256 amountBDesired,
         address user,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external returns (LiquidityV2GuardResult memory result) {
         lastUser = user;
         lastRouter = router;
@@ -407,7 +418,7 @@ contract MockLiquidityV2Guard {
         uint256 amountADesired,
         uint256 amountBDesired,
         address user,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external view {
         router;
         tokenA;

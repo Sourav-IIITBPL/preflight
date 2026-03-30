@@ -97,9 +97,7 @@ contract LiquidityV2RiskPolicyTest is Test, RiskPolicyStructBuilder {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                BaseRiskPolicy.InvalidPackedKind.selector,
-                uint8(PolicyKind.LIQUIDITY_V2),
-                uint8(PolicyKind.SWAP_V2)
+                BaseRiskPolicy.InvalidPackedKind.selector, uint8(PolicyKind.LIQUIDITY_V2), uint8(PolicyKind.SWAP_V2)
             )
         );
         policy.decode(packed);

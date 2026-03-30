@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {
-    VaultGuardResult,
-    SwapV2GuardResult,
-    LiquidityV2GuardResult,
-    LiquidityOperationType
-} from "../../types/OnChainTypes.sol";
-import {VaultOpType} from "../../types/OffChainTypes.sol";
+import {VaultGuardResult, SwapV2GuardResult, LiquidityV2GuardResult} from "../../types/OnChainTypes.sol";
+import {VaultOpType, LiquidityOpType} from "../../types/OffChainTypes.sol";
 
 /**
  * @author Sourav-IITBPL
@@ -135,7 +130,7 @@ interface ILiquidityV2Guard {
         address tokenB,
         uint256 amountADesired,
         uint256 amountBDesired,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external returns (LiquidityV2GuardResult memory result);
 
     /**
@@ -156,7 +151,7 @@ interface ILiquidityV2Guard {
         uint256 amountADesired,
         uint256 amountBDesired,
         address user,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external returns (LiquidityV2GuardResult memory result);
 
     /**
@@ -176,6 +171,6 @@ interface ILiquidityV2Guard {
         uint256 amountADesired,
         uint256 amountBDesired,
         address user,
-        LiquidityOperationType operationType
+        LiquidityOpType operationType
     ) external view;
 }

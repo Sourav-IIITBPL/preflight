@@ -3,7 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 
-import {SVGRenderer} from "../../src/SVGRenderer.sol";
+import {SVGRenderer} from "../../src/nftReport/SVGRenderer.sol";
+import {RenderContext} from "../../src/nftReport/interfaces/ISVGRenderer.sol";
 import {RiskPolicyStructBuilder} from "../helpers/RiskPolicyStructBuilder.sol";
 import {ERC4626RiskPolicy} from "../../src/riskpolicies/ERC4626RiskPolicy.sol";
 import {SwapV2RiskPolicy} from "../../src/riskpolicies/SwapV2RiskPolicy.sol";
@@ -23,7 +24,7 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
 
     function test_buildTokenUriProducesDataUriForVaultReport() public view {
         uint256 packed = erc4626Policy.evaluate("", _baseVaultGuardResult(), VaultOpType.DEPOSIT);
-        SVGRenderer.RenderContext memory context = SVGRenderer.RenderContext({
+        RenderContext memory context = RenderContext({
             packedReport: packed,
             owner: address(0xB0B),
             sourceMinter: address(0xCAFE),
@@ -39,19 +40,11 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
         uint256 vaultPacked = erc4626Policy.evaluate("", _baseVaultGuardResult(), VaultOpType.DEPOSIT);
         uint256 swapPacked = swapPolicy.evaluate("", _baseSwapGuardResult(), SwapOpType.EXACT_TOKENS_IN);
 
-        SVGRenderer.RenderContext memory vaultContext = SVGRenderer.RenderContext({
-            packedReport: vaultPacked,
-            owner: address(0x1),
-            sourceMinter: address(0x2),
-            mintedAt: 10,
-            mintedBlock: 20
+        RenderContext memory vaultContext = RenderContext({
+            packedReport: vaultPacked, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 10, mintedBlock: 20
         });
-        SVGRenderer.RenderContext memory swapContext = SVGRenderer.RenderContext({
-            packedReport: swapPacked,
-            owner: address(0x1),
-            sourceMinter: address(0x2),
-            mintedAt: 10,
-            mintedBlock: 20
+        RenderContext memory swapContext = RenderContext({
+            packedReport: swapPacked, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 10, mintedBlock: 20
         });
 
         string memory vaultUri = harness.build(1, vaultContext);
@@ -65,19 +58,11 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
     function test_buildTokenUriChangesWhenContextChanges() public view {
         uint256 packed = erc4626Policy.evaluate("", _baseVaultGuardResult(), VaultOpType.MINT);
 
-        SVGRenderer.RenderContext memory first = SVGRenderer.RenderContext({
-            packedReport: packed,
-            owner: address(0x1),
-            sourceMinter: address(0x2),
-            mintedAt: 100,
-            mintedBlock: 200
+        RenderContext memory first = RenderContext({
+            packedReport: packed, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 100, mintedBlock: 200
         });
-        SVGRenderer.RenderContext memory second = SVGRenderer.RenderContext({
-            packedReport: packed,
-            owner: address(0x3),
-            sourceMinter: address(0x4),
-            mintedAt: 300,
-            mintedBlock: 400
+        RenderContext memory second = RenderContext({
+            packedReport: packed, owner: address(0x3), sourceMinter: address(0x4), mintedAt: 300, mintedBlock: 400
         });
 
         string memory firstUri = harness.build(11, first);

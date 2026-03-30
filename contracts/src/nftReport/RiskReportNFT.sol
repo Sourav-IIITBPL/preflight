@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import {ISVGRenderer,RenderContext} from "./interfaces/ISVGRenderer.sol";
+import {ISVGRenderer, RenderContext} from "./interfaces/ISVGRenderer.sol";
 
 /**
  * @title RiskReportNFT
@@ -34,7 +34,7 @@ contract RiskReportNFT is ERC721, Ownable {
         uint64 mintedBlock;
     }
 
-     ISVGRenderer public svgRenderer;
+    ISVGRenderer public svgRenderer;
     uint256 private _nextTokenId;
     mapping(uint256 => StoredRiskReport) private _storedReports;
     mapping(address => bool) public authorizedMinters;
@@ -81,12 +81,12 @@ contract RiskReportNFT is ERC721, Ownable {
         authorizedMinters[minter] = authorized;
         emit AuthorizedMinterSet(minter, authorized);
     }
-    
+
     /**
      * @notice set the new svgRenderer contract.
      * @param _svgRenderer Address of new svgRenderer.
      */
-      function setSVGRenderer(address _svgRenderer) external onlyOwner {
+    function setSVGRenderer(address _svgRenderer) external onlyOwner {
         if (_svgRenderer == address(0)) revert ZeroAddress();
         svgRenderer = ISVGRenderer(_svgRenderer);
     }
@@ -97,7 +97,7 @@ contract RiskReportNFT is ERC721, Ownable {
      * @param recipient Address that should receive the minted NFT.
      * @return tokenId Newly minted NFT identifier.
      */
-    function mint(uint256 packedRiskReport,address recipient) external onlyAuthorizedMinter returns (uint256 tokenId) {
+    function mint(uint256 packedRiskReport, address recipient) external onlyAuthorizedMinter returns (uint256 tokenId) {
         if (recipient == address(0)) revert ZeroAddress();
         tokenId = _mintReport(recipient, packedRiskReport);
     }

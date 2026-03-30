@@ -4,7 +4,14 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 
 import {TokenGuardResult} from "../../src/guards/interfaces/ITokenGuard.sol";
-import {TokenGuardHarness, CleanTokenSample, FeatureRichTokenSample, RenouncedOwnerTokenSample, CloneImplementationSample, CloneFactorySample} from "../mocks/TokenGuardHarnesses.sol";
+import {
+    TokenGuardHarness,
+    CleanTokenSample,
+    FeatureRichTokenSample,
+    RenouncedOwnerTokenSample,
+    CloneImplementationSample,
+    CloneFactorySample
+} from "../mocks/TokenGuardHarnesses.sol";
 
 contract TokenGuardLibraryTest is Test {
     TokenGuardHarness internal harness;

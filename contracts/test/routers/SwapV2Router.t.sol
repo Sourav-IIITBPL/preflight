@@ -128,7 +128,8 @@ contract SwapV2RouterTest is Test {
         policy.setEvaluateReturn(2222);
 
         vm.prank(user);
-        uint256 packed = router.storeAndMintSwapCheck(address(ammRouter), path, 3e18, SwapOpType.EXACT_TOKENS_OUT, hex"abcd");
+        uint256 packed =
+            router.storeAndMintSwapCheck(address(ammRouter), path, 3e18, SwapOpType.EXACT_TOKENS_OUT, hex"abcd");
 
         assertEq(packed, 2222);
         assertEq(guard.lastRouter(), address(ammRouter));

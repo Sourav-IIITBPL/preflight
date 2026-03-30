@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {SVGRenderer} from "../../src/SVGRenderer.sol";
+import {SVGRenderer} from "../../src/nftReport/SVGRenderer.sol";
+import {RenderContext} from "../../src/nftReport/interfaces/ISVGRenderer.sol";
 
 contract SVGRendererHarness {
-    function build(uint256 tokenId, SVGRenderer.RenderContext memory context) external pure returns (string memory) {
-        return SVGRenderer.buildTokenURI(tokenId, context);
+    SVGRenderer public renderer;
+
+    constructor() {
+        renderer = new SVGRenderer();
+    }
+
+    function build(uint256 tokenId, RenderContext memory context) external view returns (string memory) {
+        return renderer.buildTokenURI(tokenId, context);
     }
 }

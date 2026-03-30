@@ -31,8 +31,7 @@ contract CleanTokenSample {
 }
 
 contract FeatureRichTokenSample {
-    bytes32 internal constant SELECTOR_MARKERS =
-        0xfe575a870a714e57f3b7b24e5b7d3b4599a0c2b840c10f1942966c683644e515;
+    bytes32 internal constant SELECTOR_MARKERS = 0xfe575a870a714e57f3b7b24e5b7d3b4599a0c2b840c10f1942966c683644e515;
 
     function name() external pure returns (string memory) {
         return "Feature";

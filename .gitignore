@@ -27,7 +27,6 @@ extension/coverage/
 # Environment files (CRITICAL)
 # -----------------------------
 .env
-.codex
 .env.*
 !.env.example
 
