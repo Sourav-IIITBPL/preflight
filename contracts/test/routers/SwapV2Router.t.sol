@@ -66,6 +66,35 @@ contract SwapV2RouterTest is Test {
         assertEq(address(router.riskReportNFT()), address(newNft));
     }
 
+    function test_onlyOwnerCanCallSetters() public {
+        address nonOwner = address(0xBAD);
+        vm.startPrank(nonOwner);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        router.setSwapGuard(address(0x123));
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        router.setRiskPolicy(address(0x123));
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        router.setRiskReportNFT(address(0x123));
+
+        vm.stopPrank();
+    }
+
+    function test_onlyOwnerCanCallRescue() public {
+        address nonOwner = address(0xBAD);
+        vm.startPrank(nonOwner);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        router.rescueERC20(address(tokenIn), receiver, 1e18);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        router.rescueETH(payable(receiver), 1e18);
+
+        vm.stopPrank();
+    }
+
     function test_guardedPreviewUsesTailForExactInAndHeadForExactOut() public {
         address[] memory path = new address[](2);
         path[0] = address(tokenIn);

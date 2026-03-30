@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import {SVGRenderer} from "./SVGRenderer.sol";
+import {ISVGRenderer,RenderContext} from "./interfaces/ISVGRenderer.sol";
 
 /**
  * @title RiskReportNFT
@@ -34,8 +34,8 @@ contract RiskReportNFT is ERC721, Ownable {
         uint64 mintedBlock;
     }
 
+     ISVGRenderer public svgRenderer;
     uint256 private _nextTokenId;
-
     mapping(uint256 => StoredRiskReport) private _storedReports;
     mapping(address => bool) public authorizedMinters;
 
@@ -58,8 +58,17 @@ contract RiskReportNFT is ERC721, Ownable {
         _;
     }
 
-    constructor() ERC721("PreFlight Risk Report", "PFR") {
+    constructor(address _svgRenderer) ERC721("PreFlight Risk Report", "PFR") {
+        svgRenderer = ISVGRenderer(_svgRenderer);
         _nextTokenId = 1;
+    }
+
+    function isAuthorizedMinter(address minter) external view returns (bool) {
+        return authorizedMinters[minter];
+    }
+
+    function getSVGRenderer() external view returns (address) {
+        return address(svgRenderer);
     }
 
     /**
@@ -71,6 +80,15 @@ contract RiskReportNFT is ERC721, Ownable {
         if (minter == address(0)) revert ZeroAddress();
         authorizedMinters[minter] = authorized;
         emit AuthorizedMinterSet(minter, authorized);
+    }
+    
+    /**
+     * @notice set the new svgRenderer contract.
+     * @param _svgRenderer Address of new svgRenderer.
+     */
+      function setSVGRenderer(address _svgRenderer) external onlyOwner {
+        if (_svgRenderer == address(0)) revert ZeroAddress();
+        svgRenderer = ISVGRenderer(_svgRenderer);
     }
 
     /**
@@ -121,7 +139,7 @@ contract RiskReportNFT is ERC721, Ownable {
         _requireExisting(tokenId);
 
         StoredRiskReport memory report = _storedReports[tokenId];
-        SVGRenderer.RenderContext memory context = SVGRenderer.RenderContext({
+        RenderContext memory context = RenderContext({
             packedReport: report.packedReport,
             owner: ownerOf(tokenId),
             sourceMinter: report.sourceMinter,
@@ -129,7 +147,7 @@ contract RiskReportNFT is ERC721, Ownable {
             mintedBlock: report.mintedBlock
         });
 
-        return SVGRenderer.buildTokenURI(tokenId, context);
+        return svgRenderer.buildTokenURI(tokenId, context);
     }
 
     /**

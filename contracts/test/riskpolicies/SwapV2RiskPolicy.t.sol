@@ -38,6 +38,44 @@ contract SwapV2RiskPolicyTest is Test, RiskPolicyStructBuilder {
         assertTrue(report.tokenRisk.hasPermit);
     }
 
+    function test_evaluateWithAllOnChainFlags() public {
+        SwapV2GuardResult memory onChain = _baseSwapGuardResult();
+        onChain.ROUTER_NOT_TRUSTED = true;
+        onChain.FACTORY_NOT_TRUSTED = true;
+        onChain.DEEP_MULTIHOP = true;
+        onChain.DUPLICATE_TOKEN_IN_PATH = true;
+        onChain.POOL_NOT_EXISTS = true;
+        onChain.FACTORY_MISMATCH = true;
+        onChain.ZERO_LIQUIDITY = true;
+        onChain.LOW_LIQUIDITY = true;
+        onChain.LOW_LP_SUPPLY = true;
+        onChain.POOL_TOO_NEW = true;
+        onChain.SEVERE_IMBALANCE = true;
+        onChain.K_INVARIANT_BROKEN = true;
+        onChain.HIGH_SWAP_IMPACT = true;
+        onChain.FLASHLOAN_RISK = true;
+        onChain.PRICE_MANIPULATED = true;
+
+        uint256 packed = policy.evaluate("", onChain, SwapOpType.EXACT_TOKENS_IN);
+        SwapV2DecodedRiskReport memory report = policy.decode(packed);
+
+        assertTrue(report.onChain.routerNotTrusted);
+        assertTrue(report.onChain.factoryNotTrusted);
+        assertTrue(report.onChain.deepMultihop);
+        assertTrue(report.onChain.duplicateTokenInPath);
+        assertTrue(report.onChain.poolNotExists);
+        assertTrue(report.onChain.factoryMismatch);
+        assertTrue(report.onChain.zeroLiquidity);
+        assertTrue(report.onChain.lowLiquidity);
+        assertTrue(report.onChain.lowLpSupply);
+        assertTrue(report.onChain.poolTooNew);
+        assertTrue(report.onChain.severeImbalance);
+        assertTrue(report.onChain.kInvariantBroken);
+        assertTrue(report.onChain.highSwapImpact);
+        assertTrue(report.onChain.flashloanRisk);
+        assertTrue(report.onChain.priceManipulated);
+    }
+
     function test_evaluateAndDecodeIncludesOffChainAndEnhancedFields() public {
         SwapV2GuardResult memory onChain = _baseSwapGuardResult();
         SwapOffChainResult memory offChain = _baseSwapOffChain();

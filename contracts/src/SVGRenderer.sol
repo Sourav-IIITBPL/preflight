@@ -15,7 +15,7 @@ import {PolicyKind, PolicyRiskCategory} from "./types/OnChainTypes.sol";
  *
  *         The bit layout mirrors `BaseRiskPolicy`.
  */
-library SVGRenderer {
+contract SVGRenderer {
     using Strings for uint256;
 
     /// @notice Runtime metadata used when rendering a report NFT.
@@ -119,7 +119,7 @@ library SVGRenderer {
      * @param context Rendering context containing the packed report and mint metadata.
      * @return Base64-encoded JSON metadata URI.
      */
-    function buildTokenURI(uint256 tokenId, RenderContext memory context) internal pure returns (string memory) {
+    function buildTokenURI(uint256 tokenId, RenderContext memory context) external pure returns (string memory) {
         DecodedReport memory report = _decode(context.packedReport);
         string memory svg = _renderSVG(tokenId, context, report);
         string memory json = Base64.encode(

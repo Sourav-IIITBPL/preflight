@@ -10,7 +10,7 @@ import {SwapV2Guard} from "../src/guards/V2Guards/SwapV2Guard.sol";
 import {LiquidityGuard} from "../src/guards/V2Guards/LiquidityV2Guard.sol";
 import {BaseDeployScript} from "./BaseDeployScript.s.sol";
 
-contract Deploy04GuardsAndProxies is BaseDeployScript {
+contract DeployGuardsAndProxies is BaseDeployScript {
     function run()
         external
         returns (

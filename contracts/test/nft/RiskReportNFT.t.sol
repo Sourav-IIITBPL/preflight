@@ -20,9 +20,26 @@ contract RiskReportNFTTest is Test {
         nft.setAuthorizedMinter(address(0), true);
     }
 
+    function test_onlyOwnerCanSetAuthorizedMinter() public {
+        address nonOwner = address(0xBAD);
+        vm.prank(nonOwner);
+        vm.expectRevert("Ownable: caller is not the owner");
+        nft.setAuthorizedMinter(minter, true);
+    }
+
     function test_ownerCanAuthorizeMinter() public {
+        vm.expectEmit(true, false, false, true);
+        emit RiskReportNFT.AuthorizedMinterSet(minter, true);
         nft.setAuthorizedMinter(minter, true);
         assertTrue(nft.authorizedMinters(minter));
+    }
+
+    function test_deauthorizeMinter() public {
+        nft.setAuthorizedMinter(minter, true);
+        assertTrue(nft.authorizedMinters(minter));
+
+        nft.setAuthorizedMinter(minter, false);
+        assertFalse(nft.authorizedMinters(minter));
     }
 
     function test_unauthorizedMintReverts() public {
@@ -31,9 +48,18 @@ contract RiskReportNFTTest is Test {
         nft.mint(123, recipient);
     }
 
+    function test_mintRevertsForZeroAddressRecipient() public {
+        nft.setAuthorizedMinter(minter, true);
+        vm.prank(minter);
+        vm.expectRevert(RiskReportNFT.ZeroAddress.selector);
+        nft.mint(123, address(0));
+    }
+
     function test_authorizedMintStoresReportAndBuildsTokenUri() public {
         nft.setAuthorizedMinter(minter, true);
 
+        vm.expectEmit(true, true, true, true);
+        emit RiskReportNFT.RiskReportMinted(1, recipient, minter, 456);
         vm.prank(minter);
         uint256 tokenId = nft.mint(456, recipient);
 
@@ -50,6 +76,19 @@ contract RiskReportNFTTest is Test {
 
         string memory uri = nft.tokenURI(tokenId);
         assertTrue(_startsWith(uri, "data:application/json;base64,"));
+    }
+
+    function test_multipleMintsIncrementTokenId() public {
+        nft.setAuthorizedMinter(minter, true);
+
+        vm.startPrank(minter);
+        uint256 id1 = nft.mint(111, recipient);
+        uint256 id2 = nft.mint(222, recipient);
+        vm.stopPrank();
+
+        assertEq(id1, 1);
+        assertEq(id2, 2);
+        assertEq(nft.totalMinted(), 2);
     }
 
     function test_nonexistentTokenReadsRevert() public {

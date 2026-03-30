@@ -66,6 +66,11 @@ contract SwapV2GuardTest is Test {
         assertEq(localGuard.snapshotBlockInterval(), 1);
     }
 
+    function test_initializeCannotBeCalledTwice() public {
+        vm.expectRevert("Initializable: contract is already initialized");
+        guard.initialize(10, address(tokenGuard));
+    }
+
     function test_adminSettersAndTrackedPoolLifecycle() public {
         guard.setTrustedRouter(address(router), true);
         guard.setTrustedFactory(address(factory), true);
@@ -82,6 +87,37 @@ contract SwapV2GuardTest is Test {
 
         guard.removeTrackedPool(address(pair));
         assertEq(guard.trackedPoolsLength(), 0);
+    }
+
+    function test_onlyOwnerCanCallSetters() public {
+        address nonOwner = address(0xBAD);
+        vm.startPrank(nonOwner);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setSnapshotBlockInterval(10);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setTrustedRouter(address(router), true);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setTrustedFactory(address(factory), true);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setAutomationForwarder(forwarder);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setPreflightCaller(preflightCaller, true);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.addTrackedPool(address(pair));
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.removeTrackedPool(address(pair));
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setTokenGuard(address(0x123));
+
+        vm.stopPrank();
     }
 
     function test_storeSwapCheckRequiresAuthorizedCaller() public {
@@ -148,6 +184,33 @@ contract SwapV2GuardTest is Test {
 
         vm.expectRevert(bytes("STALE_CHECK"));
         guard.validateSwapCheck(address(router), path, 1e18, true, user);
+    }
+
+    function test_validateSwapCheckRevertsOnMismatchedParameters() public {
+        guard.setTrustedRouter(address(router), true);
+        guard.setTrustedFactory(address(factory), true);
+        guard.setPreflightCaller(preflightCaller, true);
+
+        address[] memory path = new address[](2);
+        path[0] = address(tokenA);
+        path[1] = address(tokenB);
+
+        guard.storeSwapCheck(address(router), path, 1e18, true, user);
+
+        // Mismatched amount
+        vm.expectRevert(bytes("FINGERPRINT_MISMATCH"));
+        guard.validateSwapCheck(address(router), path, 2e18, true, user);
+
+        // Mismatched direction
+        vm.expectRevert(bytes("FINGERPRINT_MISMATCH"));
+        guard.validateSwapCheck(address(router), path, 1e18, false, user);
+
+        // Mismatched path
+        address[] memory path2 = new address[](2);
+        path2[0] = address(tokenB);
+        path2[1] = address(tokenA);
+        vm.expectRevert(bytes("FINGERPRINT_MISMATCH"));
+        guard.validateSwapCheck(address(router), path2, 1e18, true, user);
     }
 
     function test_checkUpkeepAndPerformUpkeepRecordsSnapshot() public {

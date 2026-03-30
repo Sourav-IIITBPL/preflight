@@ -8,7 +8,7 @@ import {SwapV2RiskPolicy} from "../src/riskpolicies/SwapV2RiskPolicy.sol";
 import {LiquidityV2RiskPolicy} from "../src/riskpolicies/LiquidityV2RiskPolicy.sol";
 import {BaseDeployScript} from "./BaseDeployScript.s.sol";
 
-contract Deploy03RiskPolicies is BaseDeployScript {
+contract DeployRiskPolicies is BaseDeployScript {
     function run()
         external
         returns (address erc4626RiskPolicy, address swapV2RiskPolicy, address liquidityV2RiskPolicy)

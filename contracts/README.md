@@ -1,0 +1,7 @@
+TokenGuard deployed at: 0xf459fF940d6b60F120931554CBfc3D4f8137d902
+ERC4626RiskPolicy deployed at: 0xa4AA9d05f142dbd5893992B70A1E8157b4801a50
+  SwapV2RiskPolicy deployed at: 0xD0d398aF8492cB6D28Bd2299A1Aa39D4dfd0AEB8
+  LiquidityV2RiskPolicy deployed at: 0x7e5828ECCf4f2D541751F13383440da43d68f2fd
+
+RiskReportNFT deployed at: 0xAd955d78df58d1459af4F3D6EC7142A09BB10eE4
+

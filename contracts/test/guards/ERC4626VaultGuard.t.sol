@@ -37,6 +37,11 @@ contract ERC4626VaultGuardTest is Test {
         guard = ERC4626VaultGuard(address(new ERC1967Proxy(address(implementation), initData)));
     }
 
+    function test_initializeCannotBeCalledTwice() public {
+        vm.expectRevert("Initializable: contract is already initialized");
+        guard.initialize(address(tokenGuard));
+    }
+
     function test_whitelistLifecycle() public {
         guard.whitelistVault(address(vault));
         assertTrue(guard.isWhitelisted(address(vault)));
@@ -51,6 +56,30 @@ contract ERC4626VaultGuardTest is Test {
         assertTrue(guard.isWhitelisted(secondVault));
         guard.removeWhitelistedVault(address(vault));
         assertFalse(guard.isWhitelisted(address(vault)));
+    }
+
+    function test_onlyOwnerCanCallSetters() public {
+        address nonOwner = address(0xBAD);
+        vm.startPrank(nonOwner);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.whitelistVault(address(vault));
+
+        address[] memory vaults = new address[](1);
+        vaults[0] = address(vault);
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.addWhitelistedVaults(vaults);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.removeWhitelistedVault(address(vault));
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setAuthorizedRouter(router, true);
+
+        vm.expectRevert("Ownable: caller is not the owner");
+        guard.setTokenGuard(address(0x123));
+
+        vm.stopPrank();
     }
 
     function test_storeCheckRequiresAuthorizedRouter() public {
@@ -110,6 +139,20 @@ contract ERC4626VaultGuardTest is Test {
         assertEq(blockNo, block.number);
 
         guard.validate(address(vault), user, 1e18, VaultOpType.DEPOSIT);
+    }
+
+    function test_validateRevertsOnMismatchedParameters() public {
+        guard.whitelistVault(address(vault));
+        guard.setAuthorizedRouter(router, true);
+        guard.storeCheck(address(vault), user, 1e18, VaultOpType.DEPOSIT);
+
+        // Mismatched amount
+        vm.expectRevert(bytes("FINGERPRINT_MISMATCH"));
+        guard.validate(address(vault), user, 2e18, VaultOpType.DEPOSIT);
+
+        // Mismatched opType
+        vm.expectRevert(bytes("FINGERPRINT_MISMATCH"));
+        guard.validate(address(vault), user, 1e18, VaultOpType.WITHDRAW);
     }
 
     function test_validateRevertsWhenStale() public {
