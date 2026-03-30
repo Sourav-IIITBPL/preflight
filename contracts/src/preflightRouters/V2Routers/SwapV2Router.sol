@@ -20,19 +20,28 @@ import {SwapOpType} from "../../types/OffChainTypes.sol";
 contract SwapV2Router is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    /// @notice Raised when a required contract or recipient address is zero.
     error ZeroAddress();
+    /// @notice Raised when a swap path is too short to represent a valid route.
     error InvalidPath();
+    /// @notice Raised when a swap receiver or refund recipient is invalid.
     error InvalidReceiver();
+    /// @notice Raised when an ETH route does not start or end with the router's WETH token as required.
     error InvalidWethPath();
+    /// @notice Raised when an ETH-based swap flow is called without the required native value.
     error InvalidEthValue();
 
     ISwapV2Guard public swapGuard;
     ISwapV2RiskPolicy public riskPolicy;
     IRiskReportNFT public riskReportNFT;
 
+    /// @notice Emitted when the router updates its swap guard dependency.
     event SwapGuardUpdated(address indexed newGuard);
+    /// @notice Emitted when the router updates its swap risk policy dependency.
     event RiskPolicyUpdated(address indexed newRiskPolicy);
+    /// @notice Emitted when the router updates the NFT contract used for report minting.
     event RiskReportNFTUpdated(address indexed newRiskReportNFT);
+    /// @notice Emitted when a swap check is stored and evaluated into a packed report.
     event SwapCheckStored(
         address indexed user,
         address indexed ammRouter,
@@ -41,6 +50,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         uint256 amountForCheck,
         uint256 packedRiskReport
     );
+    /// @notice Emitted after a guarded swap executes successfully.
     event GuardedSwapExecuted(
         address indexed user,
         address indexed ammRouter,
@@ -106,11 +116,13 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Previews a guarded exact-input token-to-token swap.
+     * @notice Previews a guarded swap quote for the provided path and swap mode.
      * @param ammRouter Address of the AMM router.
      * @param path Swap path.
-     * @param amountIn Exact token input amount.
+     * @param isExactTokenIn Whether the preview should use exact-input quoting.
+     * @param amountIn Amount supplied to the guard as the quote input.
      * @return result Guard result for the swap.
+     * @return amountOut Final quote amount returned from the guard-backed router query.
      */
     function guardedPreview(address ammRouter, address[] calldata path, bool isExactTokenIn, uint256 amountIn)
         external
@@ -423,6 +435,13 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         require(success, "ETH_RESCUE_FAILED");
     }
 
+    /// @dev Stores a swap check, evaluates the packed policy report, and mints the corresponding NFT.
+    /// @param ammRouter Address of the AMM router.
+    /// @param path Swap path used for the check.
+    /// @param amountForCheck Amount submitted to the swap guard.
+    /// @param offChainData ABI-encoded off-chain simulation data.
+    /// @param operation Swap operation being evaluated.
+    /// @return packedRiskReport Packed risk report produced by the policy.
     function _storeAndMintSwapCheck(
         address ammRouter,
         address[] calldata path,
@@ -435,30 +454,40 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         SwapV2GuardResult memory result =
             swapGuard.storeSwapCheck(ammRouter, path, amountForCheck, _isExactTokenIn(operation), msg.sender);
         packedRiskReport = riskPolicy.evaluate(offChainData, result, operation);
-        riskReportNFT.mint(packedRiskReport);
+        riskReportNFT.mint(packedRiskReport, msg.sender);
 
         emit SwapCheckStored(
             msg.sender, ammRouter, operation, keccak256(abi.encode(path)), amountForCheck, packedRiskReport
         );
     }
 
+    /// @dev Returns whether a swap operation uses exact-input semantics for guard quoting.
+    /// @param operation Swap operation to classify.
+    /// @return True when the operation is exact-input based.
     function _isExactTokenIn(SwapOpType operation) internal pure returns (bool) {
         return operation == SwapOpType.EXACT_TOKENS_IN || operation == SwapOpType.EXACT_ETH_IN
             || operation == SwapOpType.EXACT_TOKENS_FOR_ETH;
     }
 
+    /// @dev Reverts when a path does not contain at least two assets.
+    /// @param path Swap path to validate.
     function _validatePath(address[] calldata path) internal pure {
         if (path.length < 2) {
             revert InvalidPath();
         }
     }
 
+    /// @dev Reverts when a receiver-like address is zero.
+    /// @param receiver Address to validate.
     function _validateReceiver(address receiver) internal pure {
         if (receiver == address(0)) {
             revert InvalidReceiver();
         }
     }
 
+    /// @dev Reverts unless the first path token matches the router's wrapped native token.
+    /// @param ammRouter Address of the AMM router.
+    /// @param path Swap path to validate.
     function _requireStartsWithWeth(address ammRouter, address[] calldata path) internal view {
         _validatePath(path);
         if (path[0] != IUniswapV2Router(ammRouter).WETH()) {
@@ -466,6 +495,9 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         }
     }
 
+    /// @dev Reverts unless the final path token matches the router's wrapped native token.
+    /// @param ammRouter Address of the AMM router.
+    /// @param path Swap path to validate.
     function _requireEndsWithWeth(address ammRouter, address[] calldata path) internal view {
         _validatePath(path);
         if (path[path.length - 1] != IUniswapV2Router(ammRouter).WETH()) {

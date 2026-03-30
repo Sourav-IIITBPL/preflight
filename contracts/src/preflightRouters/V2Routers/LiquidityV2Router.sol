@@ -20,53 +20,94 @@ import {LiquidityV2DecodedRiskReport} from "../../riskpolicies/LiquidityV2RiskPo
 contract LiquidityV2Router is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    /// @notice Raised when a required contract or recipient address is zero.
     error ZeroAddress();
+    /// @notice Raised when a liquidity recipient or refund recipient is invalid.
     error InvalidRecipient();
+    /// @notice Raised when an ETH-based liquidity flow is called without the required native value.
     error InvalidEthValue();
+    /// @notice Raised when the router factory does not expose a pair for the requested tokens.
     error PairNotFound();
 
+    /// @notice Parameters for a guarded ERC-20/ERC-20 add-liquidity flow.
     struct AddLiquidityParams {
+        /// @notice AMM router that executes the liquidity addition.
         address ammRouter;
+        /// @notice First token of the pair.
         address tokenA;
+        /// @notice Second token of the pair.
         address tokenB;
+        /// @notice Desired amount of token A to supply.
         uint256 amountADesired;
+        /// @notice Desired amount of token B to supply.
         uint256 amountBDesired;
+        /// @notice Minimum acceptable amount of token A that must be consumed.
         uint256 amountAMin;
+        /// @notice Minimum acceptable amount of token B that must be consumed.
         uint256 amountBMin;
+        /// @notice Recipient of the minted LP tokens.
         address lpRecipient;
+        /// @notice Recipient of any unused input token refunds.
         address refundRecipient;
+        /// @notice Deadline passed through to the underlying router call.
         uint256 deadline;
     }
 
+    /// @notice Parameters for a guarded ERC-20/ETH add-liquidity flow.
     struct AddLiquidityETHParams {
+        /// @notice AMM router that executes the liquidity addition.
         address ammRouter;
+        /// @notice ERC-20 token paired against ETH.
         address token;
+        /// @notice Desired amount of the ERC-20 token to supply.
         uint256 amountTokenDesired;
+        /// @notice Minimum acceptable token amount consumed by the router.
         uint256 amountTokenMin;
+        /// @notice Minimum acceptable ETH amount consumed by the router.
         uint256 amountETHMin;
+        /// @notice Recipient of the minted LP tokens.
         address lpRecipient;
+        /// @notice Recipient of any leftover token or ETH refunds.
         address refundRecipient;
+        /// @notice Deadline passed through to the underlying router call.
         uint256 deadline;
     }
 
+    /// @notice Parameters for a guarded ERC-20/ERC-20 remove-liquidity flow.
     struct RemoveLiquidityParams {
+        /// @notice AMM router that executes the liquidity removal.
         address ammRouter;
+        /// @notice First token of the pair.
         address tokenA;
+        /// @notice Second token of the pair.
         address tokenB;
+        /// @notice LP token amount to burn.
         uint256 lpAmountToBurn;
+        /// @notice Minimum acceptable amount of token A to receive.
         uint256 amountAMin;
+        /// @notice Minimum acceptable amount of token B to receive.
         uint256 amountBMin;
+        /// @notice Recipient of the withdrawn underlying tokens.
         address tokenRecipient;
+        /// @notice Deadline passed through to the underlying router call.
         uint256 deadline;
     }
 
+    /// @notice Parameters for a guarded ERC-20/ETH remove-liquidity flow.
     struct RemoveLiquidityETHParams {
+        /// @notice AMM router that executes the liquidity removal.
         address ammRouter;
+        /// @notice ERC-20 token paired against ETH.
         address token;
+        /// @notice LP token amount to burn.
         uint256 lpAmountToBurn;
+        /// @notice Minimum acceptable token amount to receive.
         uint256 amountTokenMin;
+        /// @notice Minimum acceptable ETH amount to receive.
         uint256 amountETHMin;
+        /// @notice Recipient of the withdrawn token and ETH proceeds.
         address recipient;
+        /// @notice Deadline passed through to the underlying router call.
         uint256 deadline;
     }
 
@@ -74,9 +115,13 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
     ILiquidityV2RiskPolicy public riskPolicy;
     IRiskReportNFT public riskReportNFT;
 
+    /// @notice Emitted when the router updates its liquidity guard dependency.
     event LiquidityGuardUpdated(address indexed newGuard);
+    /// @notice Emitted when the router updates its liquidity risk policy dependency.
     event RiskPolicyUpdated(address indexed newRiskPolicy);
+    /// @notice Emitted when the router updates the NFT contract used for report minting.
     event RiskReportNFTUpdated(address indexed newRiskReportNFT);
+    /// @notice Emitted when a liquidity check is stored and evaluated into a packed report.
     event LiquidityCheckStored(
         address indexed user,
         address indexed ammRouter,
@@ -87,6 +132,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
         uint256 amountB,
         uint256 packedRiskReport
     );
+    /// @notice Emitted after a guarded liquidity operation executes successfully.
     event GuardedLiquidityExecuted(
         address indexed user, address indexed ammRouter, address indexed recipient, LiquidityOperationType operation
     );
@@ -247,7 +293,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             ammRouter, tokenA, tokenB, amountADesired, amountBDesired, msg.sender, LiquidityOperationType.ADD
         );
         packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.ADD);
-        riskReportNFT.mint(packedRiskReport);
+        riskReportNFT.mint(packedRiskReport, msg.sender);
 
         emit LiquidityCheckStored(
             msg.sender,
@@ -287,7 +333,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             LiquidityOperationType.ADD_ETH
         );
         packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.ADD_ETH);
-        riskReportNFT.mint(packedRiskReport);
+        riskReportNFT.mint(packedRiskReport, msg.sender);
 
         emit LiquidityCheckStored(
             msg.sender,
@@ -321,7 +367,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             ammRouter, tokenA, tokenB, lpAmountToBurn, 0, msg.sender, LiquidityOperationType.REMOVE
         );
         packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.REMOVE);
-        riskReportNFT.mint(packedRiskReport);
+        riskReportNFT.mint(packedRiskReport,msg.sender);
 
         emit LiquidityCheckStored(
             msg.sender, ammRouter, LiquidityOperationType.REMOVE, tokenA, tokenB, lpAmountToBurn, 0, packedRiskReport
@@ -346,7 +392,7 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
             ammRouter, token, address(0), lpAmountToBurn, 0, msg.sender, LiquidityOperationType.REMOVE_ETH
         );
         packedRiskReport = riskPolicy.evaluate(offChainData, result, LiquidityOpType.REMOVE_ETH);
-        riskReportNFT.mint(packedRiskReport);
+        riskReportNFT.mint(packedRiskReport,msg.sender);
 
         emit LiquidityCheckStored(
             msg.sender,
@@ -605,12 +651,18 @@ contract LiquidityV2Router is Ownable, ReentrancyGuard {
         require(success, "ETH_RESCUE_FAILED");
     }
 
+    /// @dev Reverts when a recipient-like address is zero.
     function _validateRecipient(address recipient) internal pure {
         if (recipient == address(0)) {
             revert InvalidRecipient();
         }
     }
 
+    /// @dev Resolves the pair address for the provided tokens and reverts when it does not exist.
+    /// @param ammRouter Router whose factory is queried.
+    /// @param tokenA First token of the pair.
+    /// @param tokenB Second token of the pair.
+    /// @return pair Pair address created by the router's factory.
     function _getPair(address ammRouter, address tokenA, address tokenB) internal view returns (address pair) {
         pair = IUniswapV2Factory(IUniswapV2Router(ammRouter).factory()).getPair(tokenA, tokenB);
         if (pair == address(0)) {

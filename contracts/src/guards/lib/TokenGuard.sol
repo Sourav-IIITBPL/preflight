@@ -38,7 +38,7 @@ library TokenGuard {
      * @notice Run all token checks against `token`. Returns a fully populated
      *         TokenGuardResult struct. All false = clean.
      * @param token ERC20 token contract address to inspect.
-     * @return result
+     * @return result Aggregated token risk flags.
      */
     function checkToken(address token) external view returns (TokenGuardResult memory result) {
         uint256 codeSize = _codeSize(token);
@@ -61,6 +61,11 @@ library TokenGuard {
         _checkFlashMint(token, result);
     }
 
+    /**
+     * @dev Populates interface- and metadata-level ERC-20 findings.
+     * @param token Token contract under inspection.
+     * @param r Mutable result struct to update.
+     */
     function _checkERC20Interface(address token, TokenGuardResult memory r) private view {
         try IERC20(token).decimals() returns (uint8 d) {
             if (d == 0 || d > 18) r.WEIRD_DECIMALS = true;
@@ -90,6 +95,12 @@ library TokenGuard {
         }
     }
 
+    /**
+     * @dev Detects common proxy patterns using implementation getters and bytecode signatures.
+     * @param token Token contract under inspection.
+     * @param codeSize Size of the deployed runtime bytecode.
+     * @param r Mutable result struct to update.
+     */
     function _checkProxy(address token, uint256 codeSize, TokenGuardResult memory r) private view {
         // EIP-1967: read the implementation slot directly from storage.
         address impl1967 = address(uint160(uint256(_readSlot(token, EIP1967_IMPL_SLOT))));
@@ -115,6 +126,11 @@ library TokenGuard {
         }
     }
 
+    /**
+     * @dev Inspects ownership exposure and whether the owner is an EOA.
+     * @param token Token contract under inspection.
+     * @param r Mutable result struct to update.
+     */
     function _checkOwnership(address token, TokenGuardResult memory r) private view {
         try IOwnable(token).owner() returns (address o) {
             if (o == address(0)) {
@@ -130,6 +146,11 @@ library TokenGuard {
         } catch {}
     }
 
+    /**
+     * @dev Detects whether the token exposes a pausable interface and current pause state.
+     * @param token Token contract under inspection.
+     * @param r Mutable result struct to update.
+     */
     function _checkPausable(address token, TokenGuardResult memory r) private view {
         try IPausable(token).paused() returns (bool isPaused) {
             r.IS_PAUSABLE = true;
@@ -137,6 +158,11 @@ library TokenGuard {
         } catch {}
     }
 
+    /**
+     * @dev Scans the token bytecode for common blacklist or blocklist selectors.
+     * @param token Token contract under inspection.
+     * @param r Mutable result struct to update.
+     */
     function _checkBlacklist(address token, TokenGuardResult memory r) private view {
         // Pattern 1: blacklisted(address)
         // Selector: keccak256("blacklisted(address)") = 0xfe575a87
@@ -295,7 +321,10 @@ library TokenGuard {
 
     /**
      * @dev Reads a 32-byte storage slot from an arbitrary contract.
-     *      Used for EIP-1967 / EIP-1822 implementation slot checks.
+     *      Used as a wrapper around `_staticReadSlot` for proxy implementation checks.
+     * @param addr Target contract to inspect.
+     * @param slot Storage slot selector being queried.
+     * @return value Best-effort slot value for the requested target and slot.
      */
     function _readSlot(address addr, bytes32 slot) private view returns (bytes32 value) {
         assembly {

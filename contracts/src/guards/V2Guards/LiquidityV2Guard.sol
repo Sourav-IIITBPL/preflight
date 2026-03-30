@@ -41,6 +41,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @dev All flags default to false (safe). true = risk signal.
      */
 
+    /// @notice Liquidity-operation findings emitted by the guard.
     struct LiquidityV2GuardResult {
         bool ROUTER_NOT_TRUSTED;
         bool PAIR_NOT_EXISTS;
@@ -65,6 +66,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
      * @dev Identifies which of the four Uniswap V2 liquidity operations is being checked.
      */
 
+    /// @notice Identifies the Uniswap V2 liquidity operation under review.
     enum LiquidityOperationType {
         ADD,
         ADD_ETH,
@@ -100,10 +102,14 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
     event LiquidityCheckPerformed(
         address indexed user, address tokenA, address tokenB, LiquidityOperationType operationType
     );
+    /// @notice Emitted when a user's liquidity check is stored for same-block validation.
     event CheckStored(address indexed user, address indexed router, uint256 blockNumber);
+    /// @notice Emitted when a trusted router entry is updated.
     event TrustedRoutersSet(address indexed router, bool status);
+    /// @notice Emitted when a trusted caller entry is updated.
     event TrustedCallersAuthorized(address indexed caller, bool authorized);
 
+    /// @dev Restricts stateful flows to trusted preflight callers.
     modifier onlyTrustedCaller() {
         require(trustedCallers[msg.sender], "NOT_AUTHORIZED_CALLER");
         _;
@@ -124,6 +130,7 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
         tokenGuard = ITokenGuard(_tokenGuard);
     }
 
+    /// @dev Authorizes UUPS upgrades through the contract owner.
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
     /// ADMIN FUNCTION ///
@@ -203,16 +210,15 @@ contract LiquidityGuard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardU
     }
 
     /**
-     * @notice Validate stored fingerprint. Reverts if pool state changed since storeCheck.
-     * @param router         Must match value used in storeCheck.
-     * @param tokenA         Must match value used in storeCheck.
-     * @param tokenB         Must match value used in storeCheck.
-     * @param amountADesired Must match value used in storeCheck.
-     * @param amountBDesired Must match value used in storeCheck.
-     * @param user           Address whose fingerprint is being checked.
-     * @param operationType  Must match value used in storeCheck.
+     * @notice Validates a stored liquidity check and reverts if pool state changed.
+     * @param router Must match the router used in `storeCheck`.
+     * @param tokenA Must match the first token used in `storeCheck`.
+     * @param tokenB Must match the second token used in `storeCheck`.
+     * @param amountADesired Must match the first amount used in `storeCheck`.
+     * @param amountBDesired Must match the second amount used in `storeCheck`.
+     * @param user User whose stored fingerprint is being validated.
+     * @param operationType Must match the operation type used in `storeCheck`.
      */
-
     function validateCheck(
         address router,
         address tokenA,

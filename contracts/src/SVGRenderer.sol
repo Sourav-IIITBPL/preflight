@@ -18,14 +18,21 @@ import {PolicyKind, PolicyRiskCategory} from "./types/OnChainTypes.sol";
 library SVGRenderer {
     using Strings for uint256;
 
+    /// @notice Runtime metadata used when rendering a report NFT.
     struct RenderContext {
+        /// @notice Packed risk report being rendered.
         uint256 packedReport;
+        /// @notice Current NFT owner.
         address owner;
+        /// @notice Contract that originally minted the NFT.
         address sourceMinter;
+        /// @notice Mint timestamp for the NFT.
         uint64 mintedAt;
+        /// @notice Mint block number for the NFT.
         uint64 mintedBlock;
     }
 
+    /// @notice Expanded view of a packed report used by the SVG and metadata renderer.
     struct DecodedReport {
         PolicyKind kind;
         uint8 operation;
@@ -106,6 +113,12 @@ library SVGRenderer {
 
     uint8 internal constant OFFCHAIN_VALID = 0;
 
+    /**
+     * @notice Builds the complete token metadata URI for a risk report NFT.
+     * @param tokenId NFT identifier being rendered.
+     * @param context Rendering context containing the packed report and mint metadata.
+     * @return Base64-encoded JSON metadata URI.
+     */
     function buildTokenURI(uint256 tokenId, RenderContext memory context) internal pure returns (string memory) {
         DecodedReport memory report = _decode(context.packedReport);
         string memory svg = _renderSVG(tokenId, context, report);

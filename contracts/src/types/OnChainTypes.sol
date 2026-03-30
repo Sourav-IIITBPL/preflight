@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/// @notice Enumerates the guarded Uniswap V2 liquidity operations used on-chain.
 enum LiquidityOperationType {
     ADD,
     ADD_ETH,
@@ -8,6 +9,7 @@ enum LiquidityOperationType {
     REMOVE_ETH
 }
 
+/// @notice Canonical on-chain risk flags produced by the ERC-4626 vault guard.
 struct VaultGuardResult {
     bool VAULT_NOT_WHITELISTED;
     bool VAULT_ZERO_SUPPLY;
@@ -26,6 +28,7 @@ struct VaultGuardResult {
     TokenGuardResult tokenResult;
 }
 
+/// @notice Canonical on-chain risk flags produced by the Uniswap V2 liquidity guard.
 struct LiquidityV2GuardResult {
     bool ROUTER_NOT_TRUSTED;
     bool PAIR_NOT_EXISTS;
@@ -46,6 +49,7 @@ struct LiquidityV2GuardResult {
     TokenGuardResult tokenBResult;
 }
 
+/// @notice Canonical on-chain risk flags produced by the Uniswap V2 swap guard.
 struct SwapV2GuardResult {
     bool ROUTER_NOT_TRUSTED;
     bool FACTORY_NOT_TRUSTED;
@@ -65,6 +69,7 @@ struct SwapV2GuardResult {
     TokenGuardResult[] tokenResult;
 }
 
+/// @notice Canonical token-level risk flags produced by the token guard.
 struct TokenGuardResult {
     bool NOT_A_CONTRACT;
     bool EMPTY_BYTECODE;
@@ -96,8 +101,7 @@ struct TokenGuardResult {
     bool HAS_FLASH_MINT;
 }
 
-// Combined report structs and enums
-
+/// @notice Final categorical severity assigned to a packed policy report.
 enum PolicyRiskCategory {
     INFO,
     WARNING,
@@ -105,12 +109,14 @@ enum PolicyRiskCategory {
     CRITICAL
 }
 
+/// @notice Identifies which policy family produced a packed risk report.
 enum PolicyKind {
     ERC4626,
     SWAP_V2,
     LIQUIDITY_V2
 }
 
+/// @notice Normalized economic findings shared across policy families.
 struct ExtendedEconomicData {
     // Vault-specific
     uint256 outputDiscrepancyBps;
@@ -144,6 +150,7 @@ struct ExtendedEconomicData {
     bool feeOnTransferConfirmed;
 }
 
+/// @notice Shared normalized off-chain findings used during policy scoring.
 struct PolicyNormalizedOffChainResult {
     bool valid;
     uint8 riskScore;
@@ -167,6 +174,7 @@ struct PolicyNormalizedOffChainResult {
     uint16 ratioDeviationBps;
 }
 
+/// @notice Decoded core report fields common to every policy family.
 struct PolicyCoreView {
     PolicyKind kind;
     uint8 operation;
@@ -192,6 +200,7 @@ struct PolicyCoreView {
     bool tokenRiskEvaluated;
 }
 
+/// @notice Decoded off-chain boolean findings common to every policy family.
 struct PolicyOffChainView {
     bool hasDangerousDelegateCall;
     bool hasSelfDestruct;
@@ -210,6 +219,7 @@ struct PolicyOffChainView {
     bool simulationReverted;
 }
 
+/// @notice Packed on-chain findings plus aggregated counts used during policy construction.
 struct PolicyOnChainPack {
     uint32 flagsPacked;
     uint32 tokenFlagsPacked;
@@ -220,6 +230,7 @@ struct PolicyOnChainPack {
     bool anyHardBlock;
 }
 
+/// @notice Packed token-risk findings plus aggregated counts used during policy construction.
 struct PolicyTokenPack {
     uint32 flagsPacked;
     uint8 criticalCount;
@@ -228,6 +239,7 @@ struct PolicyTokenPack {
     bool evaluated;
 }
 
+/// @notice Decoded token-risk flags shared across policy families.
 struct PolicyTokenFlagsView {
     bool evaluated;
     bool notAContract;
@@ -259,4 +271,3 @@ struct PolicyTokenFlagsView {
     bool hasPermit;
     bool hasFlashMint;
 }
-

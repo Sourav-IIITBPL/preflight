@@ -16,6 +16,7 @@ import {SwapOffChainResult, SwapOpType} from "../types/OffChainTypes.sol";
 import {TokenGuardResult, SwapV2GuardResult} from "../types/OnChainTypes.sol";
 import {BaseRiskPolicy, EnhancedCoreView} from "./BaseRiskPolicy.sol";
 
+/// @notice Human-readable swap on-chain findings decoded from a packed report.
 struct SwapV2OnChainView {
     bool routerNotTrusted;
     bool factoryNotTrusted;
@@ -34,6 +35,7 @@ struct SwapV2OnChainView {
     bool priceManipulated;
 }
 
+/// @notice Fully decoded swap risk report view returned by the policy.
 struct SwapV2DecodedRiskReport {
     PolicyCoreView core;
     PolicyOffChainView offChain;

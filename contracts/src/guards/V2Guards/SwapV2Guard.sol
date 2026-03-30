@@ -45,21 +45,31 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
     /// @notice Per-pool TWAP snapshot stored by Chainlink Automation.
     struct PriceSnapshot {
+        /// @notice Cumulative price of token0 at snapshot time.
         uint256 cumulative0; // price0CumulativeLast at snapshot time + current-block accrual
+        /// @notice Cumulative price of token1 at snapshot time.
         uint256 cumulative1;
+        /// @notice Block timestamp associated with the snapshot.
         uint32 timestamp; // block.timestamp at snapshot
+        /// @notice Block number at which the snapshot was recorded.
         uint256 lastBlock; // block.number at snapshot
     }
 
+    /// @notice Compact same-block fingerprint stored for swap validation.
     struct StoredSwapCheck {
+        /// @notice Packed compact form of the stored guard result.
         uint256 packed;
+        /// @notice Bytes payload used when the stored check exceeds compact packing.
         bytes data;
+        /// @notice Number of token-level entries encoded in the stored check.
         uint8 length;
+        /// @notice Whether the compact packed representation is used.
         bool isCompact;
+        /// @notice Amount associated with the stored swap check.
         uint256 value;
     }
 
-    /// @CONSTANTS
+    // CONSTANTS
 
     /// Minimum reserve (raw units). Below this we flag LOW_LIQUIDITY.
     uint256 public constant MINIMUM_RAW_RESERVE = 1_000;
@@ -96,20 +106,30 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
     /// EVENTS
 
+    /// @notice Emitted when a router's trust status is updated.
     event RouterTrustSet(address indexed router, bool status);
+    /// @notice Emitted when a factory's trust status is updated.
     event FactoryTrustSet(address indexed factory, bool status);
+    /// @notice Emitted when a pool is added to the TWAP tracking set.
     event PoolTracked(address indexed pool);
+    /// @notice Emitted when a new TWAP snapshot is recorded for a pool.
     event SnapshotRecorded(address indexed pool, uint256 block_);
+    /// @notice Emitted when the authorized Chainlink forwarder is updated.
     event ForwarderSet(address indexed forwarder);
+    /// @notice Emitted when the snapshot cadence is updated.
     event SnapshotBlockIntervalSet(uint256 blocks);
+    /// @notice Emitted when a preflight caller is authorized or revoked.
     event PreflightCallerSet(address indexed caller, bool authorized);
+    /// @notice Emitted when a user's swap check is stored for same-block validation.
     event SwapCheckStored(
         address indexed user, address indexed router, SwapV2GuardResult indexed result, uint256 blockNumber
     );
+    /// @notice Emitted when a swap guard check is executed.
     event SwapCheckPerformed(
         address indexed router, address[] indexed path, uint256 amountIn, SwapV2GuardResult indexed result
     );
 
+    /// @dev Restricts stateful swap check storage to authorized preflight callers.
     modifier onlyPreflightCaller() {
         require(authorizedPreflightCallers[msg.sender], "NOT_AUTHORIZED_PREFLIGHT_CALLER");
         _;
@@ -119,6 +139,11 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         _disableInitializers();
     }
 
+    /**
+     * @notice Initializes the upgradeable swap guard.
+     * @param _snapshotBlockInterval Minimum block interval between TWAP snapshots.
+     * @param _tokenGuard Address of the TokenGuard contract used for token checks.
+     */
     function initialize(uint256 _snapshotBlockInterval, address _tokenGuard) public initializer {
         __Ownable_init();
         __UUPSUpgradeable_init();
@@ -127,10 +152,15 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         tokenGuard = ITokenGuard(_tokenGuard);
     }
 
+    /// @dev Authorizes UUPS upgrades through the contract owner.
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
     //--------------------------------------------// ADMIN FUNCTIONS //---------------------------------------------//
 
+    /**
+     * @notice Adds a pool to the tracked set and immediately records a baseline snapshot.
+     * @param pool Pair address to begin tracking.
+     */
     function addTrackedPool(address pool) external onlyOwner {
         require(pool != address(0), "ZERO_ADDRESS");
         trackedPools.push(pool);
@@ -143,6 +173,10 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         emit PoolTracked(pool);
     }
 
+    /**
+     * @notice Removes a pool from the tracked set.
+     * @param pool Pair address to stop tracking.
+     */
     function removeTrackedPool(address pool) external onlyOwner {
         uint256 len = trackedPools.length;
         for (uint256 i = 0; i < len;) {
@@ -158,17 +192,31 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         revert("POOL_NOT_TRACKED");
     }
 
+    /**
+     * @notice Updates the minimum block interval between TWAP snapshots.
+     * @param blocks_ Snapshot interval measured in blocks.
+     */
     function setSnapshotBlockInterval(uint256 blocks_) external onlyOwner {
         require(blocks_ > 0, "ZERO_INTERVAL");
         snapshotBlockInterval = blocks_;
         emit SnapshotBlockIntervalSet(blocks_);
     }
 
+    /**
+     * @notice Marks a router as trusted or untrusted.
+     * @param router Router address to configure.
+     * @param status Whether the router should be trusted.
+     */
     function setTrustedRouter(address router, bool status) external onlyOwner {
         trustedRouters[router] = status;
         emit RouterTrustSet(router, status);
     }
 
+    /**
+     * @notice Marks a factory as trusted or untrusted.
+     * @param factory Factory address to configure.
+     * @param status Whether the factory should be trusted.
+     */
     function setTrustedFactory(address factory, bool status) external onlyOwner {
         trustedFactories[factory] = status;
         emit FactoryTrustSet(factory, status);
@@ -176,6 +224,7 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
     /**
      * @notice Set the Chainlink Automation forwarder address.
+     * @param forwarder Forwarder address allowed to call `performUpkeep`.
      */
     function setAutomationForwarder(address forwarder) external onlyOwner {
         require(forwarder != address(0), "ZERO_ADDRESS");
@@ -183,18 +232,36 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         emit ForwarderSet(forwarder);
     }
 
+    /**
+     * @notice Grants or revokes permission for preflight routers to store checks.
+     * @param caller Caller address to configure.
+     * @param authorized Whether the caller should be authorized.
+     */
     function setPreflightCaller(address caller, bool authorized) external onlyOwner {
         require(caller != address(0), "ZERO_ADDRESS");
         authorizedPreflightCallers[caller] = authorized;
         emit PreflightCallerSet(caller, authorized);
     }
 
+    /**
+     * @notice Returns the number of pools currently tracked for TWAP snapshots.
+     * @return Number of tracked pools.
+     */
     function trackedPoolsLength() external view returns (uint256) {
         return trackedPools.length;
     }
 
     // EXTERNAL FUNCTION //
 
+    /**
+     * @notice Runs a swap guard check and returns the computed router quote.
+     * @param router Router address to inspect.
+     * @param path Swap path to evaluate.
+     * @param amount Exact-input or exact-output amount used for the quote.
+     * @param isExactTokenIn Whether `amount` represents exact input.
+     * @return result Swap risk findings for the path.
+     * @return amountsOut Router quote corresponding to the swap mode.
+     */
     function swapCheckV2(address router, address[] calldata path, uint256 amount, bool isExactTokenIn)
         external
         returns (SwapV2GuardResult memory result, uint256[] memory amountsOut)
@@ -205,6 +272,11 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     /**
      * @notice Validate that pool state has not changed since storeSwapCheck.
      *         Called by SwapV2Executor before executing swaps.
+     * @param router Router address used for the stored check.
+     * @param path Swap path used for the stored check.
+     * @param amount Exact-input or exact-output amount used for the stored check.
+     * @param isExactTokenIn Whether `amount` represents exact input.
+     * @param user User whose stored check is being validated.
      */
     function validateSwapCheck(
         address router,
@@ -239,6 +311,12 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
     /**
      * @notice Store swap state fingerprint for `user`. Called by PreFlightRouter.
      *         The fingerprint covers pool reserves and TWAP snapshots for all hops.
+     * @param router Router address to inspect.
+     * @param path Swap path to fingerprint.
+     * @param amount Exact-input or exact-output amount used for the check.
+     * @param isExactTokenIn Whether `amount` represents exact input.
+     * @param user User whose fingerprint is being stored.
+     * @return Swap guard findings stored for the user.
      */
     function storeSwapCheck(address router, address[] calldata path, uint256 amount, bool isExactTokenIn, address user)
         external
@@ -269,6 +347,13 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         return result;
     }
 
+    /**
+     * @notice Returns the latest stored swap fingerprint decoded back into guard output.
+     * @param user User whose stored check is requested.
+     * @param router Router used when the check was stored.
+     * @return result Decoded stored swap guard result.
+     * @return amountOut Stored output-side quote associated with the check.
+     */
     function getStoredCheck(address user, address router)
         external
         view
@@ -286,6 +371,13 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
      * @return twap0UQ TWAP of token0 priced in token1 (UQ112x112)
      * @return twap1UQ TWAP of token1 priced in token0 (UQ112x112)
      * @return windowSeconds Duration of the TWAP window
+     */
+    /**
+     * @notice Returns the current TWAP-derived cumulative values for a tracked pair.
+     * @param pair Pair address whose snapshot window is queried.
+     * @return twap0UQ Time-weighted cumulative price for token0.
+     * @return twap1UQ Time-weighted cumulative price for token1.
+     * @return windowSeconds Elapsed snapshot window in seconds.
      */
     function getTWAP(address pair) external view returns (uint256 twap0UQ, uint256 twap1UQ, uint32 windowSeconds) {
         PriceSnapshot memory snap = snapshots[pair];
@@ -311,6 +403,11 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
     /**
      * @notice Chainlink Automation checkUpkeep — identifies pools needing a snapshot.
+     */
+    /**
+     * @notice Chainlink Automation hook that reports whether tracked pools need fresh snapshots.
+     * @return upkeepNeeded True when at least one tracked pool has exceeded the snapshot interval.
+     * @return performData ABI-encoded pool list that should be snapshotted by `performUpkeep`.
      */
     function checkUpkeep(bytes calldata) external view override returns (bool upkeepNeeded, bytes memory performData) {
         uint256 total = trackedPools.length;
@@ -345,6 +442,10 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
 
     /**
      * @notice Chainlink Automation performUpkeep — records snapshots.
+     */
+    /**
+     * @notice Records fresh snapshots for the pools selected by `checkUpkeep`.
+     * @param data ABI-encoded array of pair addresses to snapshot.
      */
     function performUpkeep(bytes calldata data) external override nonReentrant {
         require(msg.sender == automationForwarder || msg.sender == owner(), "UNAUTHORIZED_UPKEEP");
@@ -499,12 +600,11 @@ contract SwapV2Guard is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgr
         emit SwapCheckPerformed(router, path, amount, result);
     }
 
-    function _checkPoolState(
-        address pair,
-        uint112 r0,
-        uint112 r1,
-        uint32 blockTimestampLast
-    ) internal view returns (uint8 flags) {
+    function _checkPoolState(address pair, uint112 r0, uint112 r1, uint32 blockTimestampLast)
+        internal
+        view
+        returns (uint8 flags)
+    {
         IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
         address token0 = pairContract.token0();
         address token1 = pairContract.token1();

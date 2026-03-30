@@ -17,7 +17,7 @@ interface IRiskReportNFT {
      * @param packedRiskReport Packed risk report value.
      * @return tokenId Minted NFT identifier.
      */
-    function mint(uint256 packedRiskReport) external returns (uint256 tokenId);
+    function mint(uint256 packedRiskReport,address recipient) external returns (uint256 tokenId);
 }
 
 /**
@@ -70,6 +70,10 @@ interface ILiquidityV2RiskPolicy {
     function decode(uint256 packedReport) external pure returns (LiquidityV2DecodedRiskReport memory report);
 }
 
+/**
+ * @author Sourav-IITBPL
+ * @notice Interface for Uniswap V2 swap risk policy evaluation and decoding.
+ */
 interface ISwapV2RiskPolicy {
     /**
      * @notice Evaluates a swap operation into a packed risk report.
@@ -90,4 +94,3 @@ interface ISwapV2RiskPolicy {
      */
     function decode(uint256 packedReport) external pure returns (SwapV2DecodedRiskReport memory report);
 }
-

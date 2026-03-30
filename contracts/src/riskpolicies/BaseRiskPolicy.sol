@@ -14,6 +14,7 @@ import {
     PolicyTokenFlagsView
 } from "../types/OnChainTypes.sol";
 
+/// @notice Decoded enhanced scoring metadata embedded in packed policy reports.
 struct EnhancedCoreView {
     uint8 economicSeverityTier;
     uint8 oracleAgeTier;
@@ -30,8 +31,10 @@ struct EnhancedCoreView {
  * @notice Shared packing, scoring, and decoding utilities for PreFlight risk policies.
  */
 abstract contract BaseRiskPolicy {
+    /// @notice Raised when a packed report is decoded with the wrong policy kind.
     error InvalidPackedKind(uint8 expectedKind, uint8 actualKind);
 
+    /// @notice Working state used while building a packed policy report.
     struct PolicyComputation {
         PolicyRiskCategory finalCategory;
         PolicyRiskCategory offChainCategory;

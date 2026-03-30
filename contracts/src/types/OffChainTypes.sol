@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/// @notice Enumerates the ERC-4626 vault operations evaluated off-chain.
 enum VaultOpType {
     DEPOSIT,
     MINT,
@@ -8,6 +9,7 @@ enum VaultOpType {
     REDEEM
 }
 
+/// @notice Enumerates the swap execution modes evaluated off-chain.
 enum SwapOpType {
     EXACT_TOKENS_IN,
     EXACT_TOKENS_OUT,
@@ -17,6 +19,7 @@ enum SwapOpType {
     TOKENS_FOR_EXACT_ETH
 }
 
+/// @notice Enumerates the liquidity execution modes evaluated off-chain.
 enum LiquidityOpType {
     ADD,
     ADD_ETH,
@@ -24,12 +27,14 @@ enum LiquidityOpType {
     REMOVE_ETH
 }
 
+/// @notice Coarse off-chain severity classification emitted by simulation tooling.
 enum RiskLevel {
     SAFE,
     WARNING,
     CRITICAL
 }
 
+/// @notice Enumerates low-level EVM trace node types captured during simulation.
 enum TraceType {
     CALL,
     DELEGATECALL,
@@ -39,6 +44,7 @@ enum TraceType {
     SELFDESTRUCT
 }
 
+/// @notice Recursive execution trace node captured from off-chain simulation.
 struct TraceEntry {
     TraceType traceType;
     address from;
@@ -52,6 +58,7 @@ struct TraceEntry {
     TraceEntry[] calls;
 }
 
+/// @notice Shared trace-level findings reused across multiple simulation result types.
 struct SharedTraceFindings {
     bool hasDangerousDelegateCall;
     address delegateCallTarget;
@@ -64,6 +71,7 @@ struct SharedTraceFindings {
     address reentrancyAddress;
 }
 
+/// @notice ERC-4626-specific trace findings extracted from simulation.
 struct VaultTraceFindings {
     bool hasDangerousDelegateCall;
     address delegateCallTarget;
@@ -81,6 +89,7 @@ struct VaultTraceFindings {
     address upgradeTarget;
 }
 
+/// @notice ERC-4626-specific economic findings extracted from simulation.
 struct VaultEconomicFindings {
     bool simulationReverted;
     string revertReason;
@@ -100,6 +109,7 @@ struct VaultEconomicFindings {
     uint256 assetOracleAge;
 }
 
+/// @notice Full off-chain simulation output for an ERC-4626 operation.
 struct VaultOffChainResult {
     bool isSafe;
     RiskLevel riskLevel;
@@ -113,6 +123,7 @@ struct VaultOffChainResult {
     string network;
 }
 
+/// @notice Swap-specific trace findings extracted from simulation.
 struct SwapTraceFindings {
     bool hasDangerousDelegateCall;
     address delegateCallTarget;
@@ -125,6 +136,7 @@ struct SwapTraceFindings {
     address reentrancyAddress;
 }
 
+/// @notice Swap-specific economic findings extracted from simulation.
 struct SwapEconomicFindings {
     bool simulationReverted;
     string revertReason;
@@ -145,6 +157,7 @@ struct SwapEconomicFindings {
     uint256 tokenOutOracleAge;
 }
 
+/// @notice Full off-chain simulation output for a swap operation.
 struct SwapOffChainResult {
     bool isSafe;
     RiskLevel riskLevel;
@@ -159,6 +172,7 @@ struct SwapOffChainResult {
     string network;
 }
 
+/// @notice Liquidity-specific trace findings extracted from simulation.
 struct LiquidityTraceFindings {
     bool hasDangerousDelegateCall;
     address delegateCallTarget;
@@ -174,6 +188,7 @@ struct LiquidityTraceFindings {
     address sweepToken;
 }
 
+/// @notice Liquidity-specific economic findings extracted from simulation.
 struct LiquidityEconomicFindings {
     bool simulationReverted;
     string revertReason;
@@ -207,6 +222,7 @@ struct LiquidityEconomicFindings {
     uint256 tokenBOracleAge;
 }
 
+/// @notice Full off-chain simulation output for a liquidity operation.
 struct LiquidityOffChainResult {
     bool isSafe;
     RiskLevel riskLevel;

@@ -16,6 +16,7 @@ import {LiquidityOffChainResult, LiquidityOpType} from "../types/OffChainTypes.s
 import {TokenGuardResult, LiquidityV2GuardResult} from "../types/OnChainTypes.sol";
 import {BaseRiskPolicy, EnhancedCoreView} from "./BaseRiskPolicy.sol";
 
+/// @notice Human-readable liquidity on-chain findings decoded from a packed report.
 struct LiquidityV2OnChainView {
     bool routerNotTrusted;
     bool pairNotExists;
@@ -34,6 +35,7 @@ struct LiquidityV2OnChainView {
     bool dustLp;
 }
 
+/// @notice Fully decoded liquidity risk report view returned by the policy.
 struct LiquidityV2DecodedRiskReport {
     PolicyCoreView core;
     PolicyOffChainView offChain;

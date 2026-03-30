@@ -16,6 +16,7 @@ import {VaultOffChainResult, VaultOpType} from "../types/OffChainTypes.sol";
 import {TokenGuardResult, VaultGuardResult} from "../types/OnChainTypes.sol";
 import {BaseRiskPolicy, EnhancedCoreView} from "./BaseRiskPolicy.sol";
 
+/// @notice Human-readable ERC-4626 on-chain findings decoded from a packed report.
 struct ERC4626OnChainView {
     bool vaultNotWhitelisted;
     bool vaultZeroSupply;
@@ -33,6 +34,7 @@ struct ERC4626OnChainView {
     bool previewConvertMismatch;
 }
 
+/// @notice Fully decoded ERC-4626 risk report view returned by the policy.
 struct ERC4626DecodedRiskReport {
     PolicyCoreView core;
     PolicyOffChainView offChain;

@@ -20,31 +20,46 @@ import {ERC4626DecodedRiskReport} from "../riskpolicies/ERC4626RiskPolicy.sol";
 contract ERC4626Router is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    /// @notice Raised when a required contract or recipient address is zero.
     error ZeroAddress();
+    /// @notice Raised when a guarded execution is requested with an invalid receiver.
     error InvalidReceiver();
+    /// @notice Raised when a stored guard check is no longer valid for the current block.
     error StaleStoredCheck();
+    /// @notice Raised when the vault state diverges from the previously stored check.
     error VaultStateChanged();
+    /// @notice Raised when the actual or previewed output falls below the configured threshold.
+    /// @param actual Actual amount observed by the router.
+    /// @param minimum Minimum amount required by the caller.
     error SlippageExceeded(uint256 actual, uint256 minimum);
+    /// @notice Raised when an ERC-4626 operation returns zero shares or zero assets.
     error ZeroOutput();
 
     IERC4626VaultGuard public vaultGuard;
     IERC4626RiskPolicy public riskPolicy;
     IRiskReportNFT public riskReportNFT;
 
+    /// @notice Emitted when the router updates its vault guard dependency.
     event VaultGuardUpdated(address indexed newGuard);
+    /// @notice Emitted when the router updates its ERC-4626 risk policy dependency.
     event RiskPolicyUpdated(address indexed newRiskPolicy);
+    /// @notice Emitted when a vault check is stored and evaluated into a packed report.
     event VaultCheckStored(
         address indexed user, address indexed vault, VaultOpType operation, uint256 amount, uint256 packedRiskReport
     );
+    /// @notice Emitted after a guarded deposit completes successfully.
     event GuardedDepositExecuted(
         address indexed user, address indexed vault, address indexed receiver, uint256 assetsIn, uint256 sharesOut
     );
+    /// @notice Emitted after a guarded redeem completes successfully.
     event GuardedRedeemExecuted(
         address indexed user, address indexed vault, address indexed receiver, uint256 sharesIn, uint256 assetsOut
     );
+    /// @notice Emitted after a guarded mint completes successfully.
     event GuardedMintExecuted(
         address indexed user, address indexed vault, address indexed receiver, uint256 sharesOut, uint256 assetsIn
     );
+    /// @notice Emitted after a guarded withdraw completes successfully.
     event GuardedWithdrawExecuted(
         address indexed user, address indexed vault, address indexed receiver, uint256 assetsOut, uint256 sharesIn
     );
@@ -104,9 +119,10 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @notice Runs a guarded preview for an ERC-4626 deposit/withdraw/redeem/mint flow.
      * @param vault Address of the target vault.
      * @param amount Amount of assets/shares to deposit/redeem.
+     * @param opType ERC-4626 operation being previewed.
      * @return result Guard result for the previewed operation.
      * @return previewShares Previewed share amount returned by the guard.
-     * @return previewAssets Previewed assets out from the guard.
+     * @return previewAssets Previewed asset amount returned by the guard.
      */
     function guardedPreview(address vault, uint256 amount, VaultOpType opType)
         external
@@ -133,7 +149,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         (result, previewShares, previewAssets) =
             vaultGuard.storeCheck(vault, msg.sender, assetAmount, VaultOpType.DEPOSIT);
         uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.DEPOSIT);
-        riskReportNFT.mint(encodedOnAndOffChain);
+        riskReportNFT.mint(encodedOnAndOffChain, msg.sender);
         return encodedOnAndOffChain;
     }
 
@@ -154,7 +170,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         uint256 previewAssets;
         (result, previewShares, previewAssets) = vaultGuard.storeCheck(vault, msg.sender, shareAmount, VaultOpType.MINT);
         uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.MINT);
-        riskReportNFT.mint(encodedOnAndOffChain);
+        riskReportNFT.mint(encodedOnAndOffChain, msg.sender);
         return encodedOnAndOffChain;
     }
 
@@ -176,7 +192,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         (result, previewShares, previewAssets) =
             vaultGuard.storeCheck(vault, msg.sender, shareAmount, VaultOpType.REDEEM);
         uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.REDEEM);
-        riskReportNFT.mint(encodedOnAndOffChain);
+        riskReportNFT.mint(encodedOnAndOffChain, msg.sender);
         return encodedOnAndOffChain;
     }
 
@@ -198,7 +214,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         (result, previewShares, previewAssets) =
             vaultGuard.storeCheck(vault, msg.sender, assetAmount, VaultOpType.WITHDRAW);
         uint256 encodedOnAndOffChain = riskPolicy.evaluate(offChainData, result, VaultOpType.WITHDRAW);
-        riskReportNFT.mint(encodedOnAndOffChain);
+        riskReportNFT.mint(encodedOnAndOffChain, msg.sender);
         return encodedOnAndOffChain;
     }
 
@@ -208,7 +224,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param assetAmount Amount of assets to deposit.
      * @param receiver Address receiving minted shares.
      * @param minSharesOut Minimum acceptable shares out.
-     * @param offChainData ABI-encoded off-chain simulation data.
+     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return sharesOut Amount of shares received and minted.
      */
     function guardedDeposit(
@@ -252,9 +268,9 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param vault Address of the target vault.
      * @param shareAmount Amount of shares to mint.
      * @param receiver Address receiving minted shares.
-     * @param minAssetsOut Minimum acceptable assets out.
-     * @param offChainData ABI-encoded off-chain simulation data.
-     * @return assetsOut Amount of assets invested.
+     * @param minAssetsOut Lower-bound check applied to the returned `assetsOut` value in the current implementation.
+     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
+     * @return assetsOut Amount of assets consumed by the mint operation.
      */
     function guardedMint(
         address vault,
@@ -303,7 +319,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param shareAmount Amount of shares to redeem and burn.
      * @param receiver Address receiving redeemed assets.
      * @param minAssetsOut Minimum acceptable assets out.
-     * @param offChainData ABI-encoded off-chain simulation data.
+     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return assetsOut Amount of assets received.
      */
     function guardedRedeem(
@@ -342,8 +358,8 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param vault Address of the target vault.
      * @param assetAmount Amount of assets to withdraw.
      * @param receiver Address receiving withdrawn assets.
-     * @param minSharesOut Minimum acceptable shares out.
-     * @param offChainData ABI-encoded off-chain simulation data.
+     * @param minSharesOut Lower-bound check applied to the returned `sharesOut` value in the current implementation.
+     * @param offChainData Reserved off-chain payload parameter kept for router API consistency.
      * @return sharesOut Amount of shares burned.
      */
     function guardedWithdraw(

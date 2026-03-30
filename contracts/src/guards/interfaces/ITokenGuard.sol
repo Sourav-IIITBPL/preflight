@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /**
+ * @title TokenGuardResult
  * @dev All flags default to false (safe). True = risk signal.
  *
  *  Confidence levels are documented inline:
@@ -51,23 +52,38 @@ struct TokenGuardResult {
     bool HAS_FLASH_MINT; // [HEURISTIC] flashLoan() / flashMint() selector found
 }
 
+/// @notice Minimal ERC-20 metadata and balance interface used by the token guard.
 interface IERC20 {
+    /// @notice Returns the token decimals when implemented.
     function decimals() external view returns (uint8);
+    /// @notice Returns the total token supply when implemented.
     function totalSupply() external view returns (uint256);
+    /// @notice Returns the token symbol when implemented.
     function symbol() external view returns (string memory);
+    /// @notice Returns the token name when implemented.
     function name() external view returns (string memory);
+    /// @notice Returns the token balance for an account.
     function balanceOf(address) external view returns (uint256);
+    /// @notice Returns the token allowance from owner to spender.
     function allowance(address, address) external view returns (uint256);
 }
 
+/// @notice Minimal ownable interface used to inspect token ownership risk.
 interface IOwnable {
+    /// @notice Returns the current owner when implemented.
     function owner() external view returns (address);
 }
 
+/// @notice Minimal pausable interface used to inspect token pause state.
 interface IPausable {
+    /// @notice Returns whether the token is currently paused.
     function paused() external view returns (bool);
 }
 
+/// @notice Interface for the token guard contract used by routers and guards.
 interface ITokenGuard {
+    /// @notice Evaluates token-level risk flags for a target token contract.
+    /// @param token Token address to inspect.
+    /// @return r Packed token-level findings.
     function checkToken(address token) external view returns (TokenGuardResult memory r);
 }
