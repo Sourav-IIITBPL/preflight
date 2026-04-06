@@ -2,7 +2,7 @@
 
 <img src="frontend/public/logo.svg" width="110" />
 
-**Zero-Trust Pre-Transaction Firewall for Arbitrum DeFi**
+**Zero-Trust Pre-Transaction Firewall for DeFi**
 
 *Verify before you execute. Trust nothing. Simulate everything.*
 
@@ -533,6 +533,10 @@ forge test --match-path "test/unit/*" -vv
 
 ## Project Status — Under Active Development
 
+> ⚠️ Note: The browser extension and Chainlink CRE simulation components are currently housed in a private repository (`preflight-private`) as they undergo finalization and hardening.  
+> This repository contains the full smart contract suite, frontend, and end-to-end architectural design.
+
+
 ## License
 
 MIT © PreFlight Contributors
@@ -540,7 +544,7 @@ MIT © PreFlight Contributors
 
 <div align="center">
 
-**Built with 🔗 Chainlink CRE · Chainlink Automation · Arbitrum · Foundry**
+**Built with 🔗 Chainlink CRE · Chainlink Automation · Foundry**
 
 *PreFlight — Trust the math, not the preview.*
 
