@@ -9,7 +9,7 @@ type TabKey = 'home' | 'portfolio';
 
 async function getActiveSite(): Promise<SiteSession | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return undefined;
+  if (!tab?.id) return undefined;      //optional chaining
 
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'PF_GET_PAGE_STATE' }) as {

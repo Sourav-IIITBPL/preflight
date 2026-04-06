@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PreFlight",
   "version": "0.1.0",
-  "description": "Extension-first transaction verification layer for official DEX pages.",
+  "description":"First pre-transaction verification layer for DeFi ecosystem.",
   "permissions": ["storage", "tabs", "activeTab", "scripting"],
   "host_permissions": [
     "https://app.camelot.exchange/*",
