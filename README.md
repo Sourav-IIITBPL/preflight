@@ -54,9 +54,9 @@ Unlike price previews or slippage warnings, PreFlight:
 - Detects manipulation patterns
 - Enforces explainable security policy
 ```js
-[ User Signs Intent ] ──► [ PreFlight Verification ] ──► [ Execute on Arbitrum ]
+[ User Signs Intent ] ──► [ PreFlight Verification ] ──► [ Execute transaction ]
                                       ↕
-                            CRE Simulations(forked Evvironment)
+                            CRE Simulations(forked Environment)
                             + on-chain guards
                             + Risk policies
                             + mint nft 
