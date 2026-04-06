@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="frontend/public/logo.svg" width="110" />
+<img src="frontend/public/logo.svg" width="250" />
 
 **Zero-Trust Pre-Transaction Firewall for DeFi**
 
