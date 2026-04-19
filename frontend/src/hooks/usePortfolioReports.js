@@ -85,31 +85,32 @@ export function usePortfolioReports({ address, isConnected }) {
       setIsLoading(true);
       setError('');
 
-      // Use window.ethereum if connected, otherwise fallback to public RPC
       const provider = window.ethereum && isConnected
         ? new ethers.BrowserProvider(window.ethereum)
         : new ethers.JsonRpcProvider(CONTRACTS.rpcUrl);
         
       const contract = new ethers.Contract(CONTRACTS.riskReportNft, RISK_REPORT_NFT_ABI, provider);
 
-      // 1. Get balance
-      const balance = Number(await contract.balanceOf(address));
-      if (balance === 0) {
+      let tokenIds = [];
+      try {
+        // Prefer tokensOfOwner if available
+        tokenIds = await contract.tokensOfOwner(address);
+      } catch (e) {
+        console.warn('tokensOfOwner not available, falling back to sequential fetch');
+        const balance = Number(await contract.balanceOf(address));
+        const cappedBalance = Math.min(balance, 50);
+        const tokenIdPromises = [];
+        for (let i = 0; i < cappedBalance; i++) {
+          tokenIdPromises.push(contract.tokenOfOwnerByIndex(address, i));
+        }
+        tokenIds = await Promise.all(tokenIdPromises);
+      }
+
+      if (tokenIds.length === 0) {
         setOnchainReports([]);
         return [];
       }
 
-      // 2. Fetch token IDs and reports in parallel for better performance
-      const cappedBalance = Math.min(balance, 50);
-      
-      // We fetch token IDs first
-      const tokenIdPromises = [];
-      for (let i = 0; i < cappedBalance; i++) {
-        tokenIdPromises.push(contract.tokenOfOwnerByIndex(address, i));
-      }
-      const tokenIds = await Promise.all(tokenIdPromises);
-
-      // Then we fetch all reports in parallel
       const reportPromises = tokenIds.map(id => contract.getReport(id));
       const reports = await Promise.all(reportPromises);
 
@@ -132,11 +133,6 @@ export function usePortfolioReports({ address, isConnected }) {
   useEffect(() => {
     refreshOnchain();
   }, [refreshOnchain]);
-
-  const clearLocalReports = useCallback(() => {
-    setLocalReports([]);
-    writeJsonStorage(REPORT_STORAGE_KEY, []);
-  }, []);
 
   const summary = useMemo(() => {
     const merged = [...onchainReports, ...localReports];
@@ -162,7 +158,6 @@ export function usePortfolioReports({ address, isConnected }) {
     isLoading,
     error,
     summary,
-    clearLocalReports,
     refreshOnchain,
   };
 }

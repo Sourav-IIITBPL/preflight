@@ -1,138 +1,117 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Wallet, Shield, History, Award, CheckCircle2 } from 'lucide-react';
-import PortfolioEmptyState from './PortfolioEmptyState';
-import RewardSummary from './RewardSummary';
+import { 
+  Wallet, 
+  RefreshCcw, 
+  ShieldCheck, 
+  Trophy, 
+  Activity,
+  Zap,
+  Layers,
+  Search
+} from 'lucide-react';
 import ReportGrid from './ReportGrid';
 import Button from './ui/Button';
 import Card from './ui/Card';
-
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1
-    }
-  }
-};
-
-const itemVariants = {
-  hidden: { y: 20, opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: {
-      type: 'spring',
-      stiffness: 100
-    }
-  }
-};
+import RewardSummary from './RewardSummary';
+import PortfolioEmptyState from './PortfolioEmptyState';
 
 export default function PortfolioPage({ walletGate, portfolio, onWalletAction, onRefresh }) {
-  if (!walletGate.isConnected) {
-    return <PortfolioEmptyState onConnect={walletGate.connectWallet} connectError={walletGate.error} />;
+  const { isConnected, address, chainId } = walletGate;
+  const { onchainReports, isLoading, summary } = portfolio;
+
+  if (!isConnected) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center text-center px-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="glass-card p-12 rounded-[3rem] max-w-lg border-brand-cyan/20"
+        >
+          <div className="mx-auto mb-8 flex h-24 w-24 items-center justify-center rounded-full bg-brand-cyan/10 text-brand-cyan">
+            <Wallet size={48} />
+          </div>
+          <h2 className="mb-4 text-4xl font-black text-white uppercase tracking-tight">Connect Wallet</h2>
+          <p className="mb-10 text-slate-400 font-medium leading-relaxed">
+            Connect your wallet to view your verified transactions and claim your PreFlight Risk Report NFTs.
+          </p>
+          <Button onClick={onWalletAction} className="w-full py-5 text-base font-black uppercase tracking-widest">
+            Connect Now
+          </Button>
+        </motion.div>
+      </div>
+    );
   }
 
   return (
-    <motion.section 
-      className="space-y-8"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-    >
-      <motion.div variants={itemVariants}>
-        <Card className="p-6 md:p-8 glass-card border-l-4 border-l-brand-cyan relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-8 opacity-5">
-            <Shield size={160} className="text-brand-cyan" />
-          </div>
-          
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-cyan/10 border border-brand-cyan/20 text-[10px] font-black uppercase tracking-[0.2em] text-brand-cyan">
-                <CheckCircle2 size={12} /> Live Dashboard
+    <div className="space-y-12 pb-20">
+      {/* PORTFOLIO HEADER */}
+      <header className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between border-b border-white/5 pb-12">
+        <div className="space-y-4">
+           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest">
+              <Activity size={12} /> Live Status: Active
+           </div>
+           <h1 className="text-5xl md:text-6xl font-black text-white uppercase tracking-tighter">
+             Your <span className="gradient-text">Verified</span> <br /> Transactions
+           </h1>
+           <div className="flex items-center gap-4 text-sm font-mono text-slate-500">
+              <div className="flex items-center gap-2">
+                 <div className="h-2 w-2 rounded-full bg-brand-cyan shadow-[0_0_8px_#00f2fe]" />
+                 <span>Chain ID: {chainId || 'Unknown'}</span>
               </div>
-              <h1 className="text-3xl font-black uppercase tracking-tight text-white md:text-4xl">Security Inventory</h1>
-              <div className="flex items-center gap-3 text-sm text-slate-400 font-medium">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
-                  <Wallet size={14} className="text-brand-cyan" />
-                  <span className="font-mono text-slate-300">{walletGate.address.slice(0, 6)}...{walletGate.address.slice(-4)}</span>
-                </div>
-                <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-brand-cyan/5 border border-brand-cyan/10 text-brand-cyan">
-                  <Award size={14} />
-                  <span>{portfolio.summary.points} XP</span>
-                </div>
+              <div className="h-4 w-px bg-white/10" />
+              <span>{address.slice(0, 6)}...{address.slice(-4)}</span>
+           </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+           <Button variant="ghost" onClick={onRefresh} disabled={isLoading} className="border-white/10 text-white hover:bg-white/5">
+              <RefreshCcw size={18} className={isLoading ? 'animate-spin' : ''} />
+              {isLoading ? 'Syncing...' : 'Refresh'}
+           </Button>
+        </div>
+      </header>
+
+      {/* STATS OVERVIEW */}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+         {[
+           { label: "Total Verified", value: summary.total, icon: <ShieldCheck className="text-emerald-400" /> },
+           { label: "Security Points", value: summary.points, icon: <Trophy className="text-brand-cyan" /> },
+           { label: "On-Chain Reports", value: summary.onchain, icon: <Layers className="text-purple-400" /> }
+         ].map((stat, i) => (
+           <Card key={i} className="glass-card p-8 border-white/5 group">
+              <div className="flex justify-between items-start mb-4">
+                 <div className="p-3 rounded-xl bg-white/5 text-brand-cyan group-hover:scale-110 transition-transform">
+                    {stat.icon}
+                 </div>
+                 <div className="text-4xl font-black text-white">{stat.value}</div>
               </div>
+              <div className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">{stat.label}</div>
+           </Card>
+         ))}
+      </section>
+
+      {/* REWARD SUMMARY */}
+      <RewardSummary summary={summary} />
+
+      {/* REPORTS LIST */}
+      <section className="space-y-8">
+         <div className="flex items-center justify-between">
+            <h2 className="text-3xl font-black text-white uppercase tracking-tight flex items-center gap-4">
+               <Zap className="text-brand-cyan" /> Transaction Log
+            </h2>
+            <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-slate-400">
+               <Search size={16} />
+               <input type="text" placeholder="Search ID..." className="bg-transparent border-none outline-none text-xs w-24 md:w-48 font-medium" />
             </div>
+         </div>
 
-            <div className="flex flex-wrap gap-3">
-              <Button variant="ghost" onClick={portfolio.clearLocalReports} disabled={!portfolio.localReports.length} className="px-5">
-                Clear Cache
-              </Button>
-              <Button variant="outline" onClick={onWalletAction} className="px-5 border-red-500/20 text-red-400 hover:bg-red-500/10 hover:border-red-500/40">
-                Disconnect
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </motion.div>
-
-      <motion.div variants={itemVariants}>
-        <RewardSummary summary={portfolio.summary} />
-      </motion.div>
-
-      <motion.div variants={itemVariants}>
-        <Card className="p-6 md:p-8 glass-card border-t-1 border-white/5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-brand-cyan">
-                <RefreshCw size={14} className={portfolio.isLoading ? 'animate-spin' : ''} />
-                Sync Protocol
-              </div>
-              <p className="max-w-2xl text-sm leading-relaxed text-slate-400 font-medium">
-                The PreFlight dashboard automatically synchronizes with the RiskReport NFT contract to discover verified 
-                transaction evidence associated with your account.
-              </p>
-            </div>
-            <Button 
-              variant="primary" 
-              onClick={onRefresh} 
-              disabled={portfolio.isLoading}
-              className="px-8 shadow-[0_0_30px_rgba(0,242,254,0.2)]"
-            >
-              <RefreshCw size={16} className={portfolio.isLoading ? 'animate-spin' : ''} />
-              {portfolio.isLoading ? 'Syncing...' : 'Force Sync'}
-            </Button>
-          </div>
-
-          {portfolio.error && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              className="mt-6 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-200/80 flex items-center gap-3"
-            >
-              <History size={18} className="text-amber-500 shrink-0" />
-              {portfolio.error}
-            </motion.div>
-          )}
-        </Card>
-      </motion.div>
-
-      <motion.div variants={itemVariants} className="space-y-12 pb-12">
-        <ReportGrid
-          title="On-chain Evidence (NFTs)"
-          reports={portfolio.onchainReports}
-          emptyText="No on-chain report NFTs discovered. Intercept a transaction via the extension to mint your first report."
-        />
-
-        <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-
-        <ReportGrid
-          title="Session Cache (Local)"
-          reports={portfolio.localReports}
-          emptyText="No local sessions found. Session data is captured automatically when using the PreFlight extension."
-        />
-      </motion.div>
-    </motion.section>
+         {onchainReports.length > 0 ? (
+           <ReportGrid items={onchainReports} isLoading={isLoading} />
+         ) : (
+           <PortfolioEmptyState onRefresh={onRefresh} />
+         )}
+      </section>
+    </div>
   );
 }

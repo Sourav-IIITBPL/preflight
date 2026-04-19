@@ -35,9 +35,12 @@ contract RiskReportNFT is ERC721, Ownable {
     }
 
     ISVGRenderer public svgRenderer;
+    mapping(address => bool) public authorizedMinters;
+    mapping(address owner => uint256[] tokenIds) public tokensOfOwner;
+
     uint256 private _nextTokenId;
     mapping(uint256 => StoredRiskReport) private _storedReports;
-    mapping(address => bool) public authorizedMinters;
+    
 
     /// @notice Emitted when the owner updates minting permission for an address.
     /// @param minter Address whose minting permission changed.
@@ -158,6 +161,7 @@ contract RiskReportNFT is ERC721, Ownable {
      */
     function _mintReport(address recipient, uint256 packedRiskReport) internal returns (uint256 tokenId) {
         tokenId = _nextTokenId++;
+        tokensOfOwner[recipient].push(tokenId);
         _safeMint(recipient, tokenId);
 
         _storedReports[tokenId] = StoredRiskReport({

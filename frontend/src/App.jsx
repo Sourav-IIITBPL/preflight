@@ -3,6 +3,7 @@ import LandingSection from './components/LandingSection';
 import InstallPage from './components/InstallPage';
 import PortfolioPage from './components/PortfolioPage';
 import Navbar from './components/layout/Navbar';
+import Footer from './components/layout/Footer';
 import ToastStack from './components/ui/ToastStack';
 import Logo from './components/ui/Logo';
 import { ROUTES } from './constants';
@@ -31,6 +32,7 @@ export default function App() {
   const navigate = (nextRoute) => {
     window.location.hash = nextRoute;
     setRoute(nextRoute);
+    window.scrollTo(0, 0);
   };
 
   const onWalletAction = async () => {
@@ -81,11 +83,11 @@ export default function App() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-brand-dark text-slate-100">
-      {/* MASSIVE BACKGROUND WATERMARK - Static & Professional */}
-      <div className="fixed inset-0 pointer-events-none z-0 flex items-center justify-center opacity-[0.015]">
+    <div className="relative min-h-screen overflow-x-hidden bg-brand-dark text-slate-100">
+      {/* MASSIVE BACKGROUND WATERMARK */}
+      <div className="fixed inset-0 pointer-events-none z-0 flex items-center justify-center opacity-[0.02]">
         <div className="w-[120vmax] h-[120vmax]">
-          <Logo className="w-full h-full" animated={false} />
+          <Logo className="w-full h-full text-brand-cyan" animated={false} />
         </div>
       </div>
 
@@ -96,19 +98,22 @@ export default function App() {
 
       <Navbar route={route} onNavigate={navigate} walletGate={walletGate} reportCount={portfolio.summary.total} onWalletAction={onWalletAction} />
 
-      <main className="relative z-10 mx-auto min-h-[calc(100vh-73px)] max-w-7xl px-4 py-6 md:px-6 md:py-8">
+      <main className="relative z-10 mx-auto min-h-[calc(100vh-73px)]">
         <AnimatePresence mode="wait">
           <motion.div
             key={route}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.3 }}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.4, ease: "easeInOut" }}
           >
             {content}
           </motion.div>
         </AnimatePresence>
       </main>
+
+      <Footer />
+
 
       <ToastStack items={toasts.items} />
     </div>

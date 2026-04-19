@@ -4,7 +4,7 @@ import { APP_NAME, NETWORK_LABEL, ROUTES } from '../../constants';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import Logo from '../ui/Logo';
-import { Wallet, History, Info, Menu } from 'lucide-react';
+import { Wallet, History, Info, Menu, ShieldCheck } from 'lucide-react';
 
 export default function Navbar({ route, onNavigate, walletGate, reportCount, onWalletAction }) {
   const walletLabel = walletGate.address
@@ -20,31 +20,31 @@ export default function Navbar({ route, onNavigate, walletGate, reportCount, onW
   ];
 
   return (
-    <header className="sticky top-0 z-50 border-b border-white/5 bg-brand-dark/60 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-6">
+    <header className="sticky top-0 z-50 glass-nav">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 md:px-6">
         {/* Brand Group */}
         <motion.button 
-          className="flex items-center gap-4 group" 
+          className="flex items-center gap-3 group" 
           onClick={() => onNavigate(ROUTES.HOME)}
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >
-          <Logo className="h-10 w-10" animated={true} />
+          <Logo className="h-12 w-12" animated={true} />
           <div className="hidden sm:block text-left">
-            <div className="text-base font-black uppercase tracking-[0.25em] text-white leading-none">{APP_NAME}</div>
-            <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.2em] text-brand-cyan/60">{NETWORK_LABEL}</div>
+            <div className="text-xl font-black uppercase tracking-[0.2em] text-white leading-none">{APP_NAME}</div>
+            <div className="mt-1 text-[8px] font-bold uppercase tracking-[0.3em] text-brand-cyan">{NETWORK_LABEL}</div>
           </div>
         </motion.button>
 
         {/* Navigation Group */}
-        <nav className="hidden md:flex items-center gap-1.5 p-1 rounded-xl bg-white/5 border border-white/5">
+        <nav className="hidden md:flex items-center gap-2 p-1 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md">
           {items.map((item) => (
             <button
               key={item.key}
-              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-all ${
+              className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 ${
                 route === item.key
-                  ? 'bg-brand-cyan/10 text-brand-cyan shadow-[inset_0_0_12px_rgba(0,242,254,0.1)] border border-brand-cyan/20'
-                  : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+                  ? 'bg-brand-cyan/20 text-brand-cyan border border-brand-cyan/30 shadow-[0_0_15px_rgba(0,242,254,0.2)]'
+                  : 'text-slate-400 hover:bg-white/10 hover:text-white border border-transparent'
               }`}
               onClick={() => onNavigate(item.key)}
             >
@@ -55,26 +55,24 @@ export default function Navbar({ route, onNavigate, walletGate, reportCount, onW
         </nav>
 
         {/* Action Group */}
-        <div className="flex items-center gap-3">
-          {/* Top-Right Mini Logo Status */}
+        <div className="flex items-center gap-4">
+          {/* Verified Transaction Count */}
           <motion.div 
-            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/10 bg-white/5 backdrop-blur-md"
-            whileHover={{ borderColor: "rgba(0, 242, 254, 0.4)" }}
+            className="hidden lg:flex items-center gap-3 px-4 py-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 backdrop-blur-md"
+            whileHover={{ borderColor: "rgba(16, 185, 129, 0.4)" }}
           >
-            <div className="h-5 w-5 opacity-60">
-              <img src="/logo.svg" alt="Status" className="h-full w-full object-contain" />
-            </div>
-            <div className="h-4 w-px bg-white/10" />
-            <Badge label={`${reportCount} Evidence Blocks`} tone="info" className="bg-transparent border-none p-0 text-[10px]" />
+            <ShieldCheck size={14} className="text-emerald-400" />
+            <div className="h-4 w-px bg-emerald-500/10" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+              {reportCount} Verified Transactions
+            </span>
           </motion.div>
-          
-          <div className="h-8 w-px bg-white/10 hidden sm:block mx-1" />
           
           <Button 
             variant={walletGate.isConnected ? 'ghost' : 'primary'} 
             onClick={onWalletAction} 
             disabled={walletGate.isConnecting}
-            className={`min-w-[140px] flex items-center justify-center gap-2 ${walletGate.isConnected ? 'border-brand-cyan/20 text-brand-cyan' : ''}`}
+            className={`flex items-center justify-center gap-2 px-6 py-3 border-brand-cyan/20 ${walletGate.isConnected ? 'text-brand-cyan' : ''}`}
           >
             <Wallet size={14} />
             <span className="text-[10px] font-black uppercase tracking-widest">{walletLabel}</span>

@@ -12,6 +12,13 @@ export const RISK_REPORT_NFT_ABI = [
     "type": "function"
   },
   {
+    "inputs": [{ "name": "owner", "type": "address" }],
+    "name": "tokensOfOwner",
+    "outputs": [{ "name": "", "type": "uint256[]" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       { "name": "owner", "type": "address" },
       { "name": "index", "type": "uint256" }
