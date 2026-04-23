@@ -17,85 +17,85 @@ library SVGLib {
     // --- Bit Layout Constants (Mirroring BaseRiskPolicy) ---
 
     /// @dev Bit shift for on-chain flags (32 bits)
-    uint8 internal constant SHIFT_ONCHAIN_FLAGS = 0;
+    uint8 public constant SHIFT_ONCHAIN_FLAGS = 0;
     /// @dev Bit shift for off-chain flags (32 bits)
-    uint8 internal constant SHIFT_OFFCHAIN_FLAGS = 32;
+    uint8 public constant SHIFT_OFFCHAIN_FLAGS = 32;
     /// @dev Bit shift for the composite risk score (8 bits)
-    uint8 internal constant SHIFT_COMPOSITE_SCORE = 64;
+    uint8 public constant SHIFT_COMPOSITE_SCORE = 64;
     /// @dev Bit shift for the on-chain sub-score (8 bits)
-    uint8 internal constant SHIFT_ONCHAIN_SCORE = 72;
+    uint8 public constant SHIFT_ONCHAIN_SCORE = 72;
     /// @dev Bit shift for the off-chain sub-score (8 bits)
-    uint8 internal constant SHIFT_OFFCHAIN_SCORE = 80;
+    uint8 public constant SHIFT_OFFCHAIN_SCORE = 80;
     /// @dev Bit shift for the final risk category (2 bits)
-    uint8 internal constant SHIFT_FINAL_CATEGORY = 88;
+    uint8 public constant SHIFT_FINAL_CATEGORY = 88;
     /// @dev Bit shift for the off-chain risk category (2 bits)
-    uint8 internal constant SHIFT_OFFCHAIN_CATEGORY = 90;
+    uint8 public constant SHIFT_OFFCHAIN_CATEGORY = 90;
     /// @dev Bit shift for the hard-block flag (1 bit)
-    uint8 internal constant SHIFT_ANY_HARD_BLOCK = 92;
+    uint8 public constant SHIFT_ANY_HARD_BLOCK = 92;
     /// @dev Bit shift for the off-chain validity flag (1 bit)
-    uint8 internal constant SHIFT_OFFCHAIN_VALID = 93;
+    uint8 public constant SHIFT_OFFCHAIN_VALID = 93;
     /// @dev Bit shift for the on-chain critical finding count (6 bits)
-    uint8 internal constant SHIFT_ONCHAIN_CRITICAL = 94;
+    uint8 public constant SHIFT_ONCHAIN_CRITICAL = 94;
     /// @dev Bit shift for the on-chain warning count (6 bits)
-    uint8 internal constant SHIFT_ONCHAIN_WARNING = 100;
+    uint8 public constant SHIFT_ONCHAIN_WARNING = 100;
     /// @dev Bit shift for the off-chain finding count (6 bits)
-    uint8 internal constant SHIFT_OFFCHAIN_FINDINGS = 106;
+    uint8 public constant SHIFT_OFFCHAIN_FINDINGS = 106;
     /// @dev Bit shift for price impact in basis points (16 bits)
-    uint8 internal constant SHIFT_PRICE_IMPACT = 112;
+    uint8 public constant SHIFT_PRICE_IMPACT = 112;
     /// @dev Bit shift for output discrepancy in basis points (16 bits)
-    uint8 internal constant SHIFT_OUTPUT_DISCREPANCY = 128;
+    uint8 public constant SHIFT_OUTPUT_DISCREPANCY = 128;
     /// @dev Bit shift for ratio deviation in basis points (16 bits)
-    uint8 internal constant SHIFT_RATIO_DEVIATION = 144;
+    uint8 public constant SHIFT_RATIO_DEVIATION = 144;
     /// @dev Bit shift for policy operation type (4 bits)
-    uint8 internal constant SHIFT_OPERATION = 160;
+    uint8 public constant SHIFT_OPERATION = 160;
     /// @dev Bit shift for policy kind (2 bits)
-    uint8 internal constant SHIFT_POLICY_KIND = 164;
+    uint8 public constant SHIFT_POLICY_KIND = 164;
     /// @dev Bit shift for policy version (8 bits)
-    uint8 internal constant SHIFT_POLICY_VERSION = 166;
+    uint8 public constant SHIFT_POLICY_VERSION = 166;
     /// @dev Bit shift for token-level risk flags (32 bits)
-    uint8 internal constant SHIFT_TOKEN_FLAGS = 174;
+    uint8 public constant SHIFT_TOKEN_FLAGS = 174;
     /// @dev Bit shift for token critical count (6 bits)
-    uint8 internal constant SHIFT_TOKEN_CRITICAL = 206;
+    uint8 public constant SHIFT_TOKEN_CRITICAL = 206;
     /// @dev Bit shift for token warning count (6 bits)
-    uint8 internal constant SHIFT_TOKEN_WARNING = 212;
+    uint8 public constant SHIFT_TOKEN_WARNING = 212;
     /// @dev Bit shift for token evaluation flag (1 bit)
-    uint8 internal constant SHIFT_TOKEN_EVALUATED = 218;
+    uint8 public constant SHIFT_TOKEN_EVALUATED = 218;
     /// @dev Bit shift for economic severity tier (3 bits)
-    uint8 internal constant SHIFT_ECONOMIC_TIER = 219;
+    uint8 public constant SHIFT_ECONOMIC_TIER = 219;
     /// @dev Bit shift for oracle age tier (3 bits)
-    uint8 internal constant SHIFT_ORACLE_AGE_TIER = 222;
+    uint8 public constant SHIFT_ORACLE_AGE_TIER = 222;
     /// @dev Bit shift for excess pull tier (3 bits)
-    uint8 internal constant SHIFT_EXCESS_PULL_TIER = 225;
+    uint8 public constant SHIFT_EXCESS_PULL_TIER = 225;
     /// @dev Bit shift for share price drift tier (3 bits)
-    uint8 internal constant SHIFT_SHARE_DRIFT_TIER = 228;
+    uint8 public constant SHIFT_SHARE_DRIFT_TIER = 228;
     /// @dev Bit shift for compound risk count (3 bits)
-    uint8 internal constant SHIFT_COMPOUND_COUNT = 231;
+    uint8 public constant SHIFT_COMPOUND_COUNT = 231;
     /// @dev Bit shift for simulation revert block flag (1 bit)
-    uint8 internal constant SHIFT_SIM_REVERT_BLOCK = 234;
+    uint8 public constant SHIFT_SIM_REVERT_BLOCK = 234;
     /// @dev Bit shift for sweep severity tier (3 bits)
-    uint8 internal constant SHIFT_SWEEP_TIER = 235;
+    uint8 public constant SHIFT_SWEEP_TIER = 235;
     /// @dev Bit shift for enhanced data presence flag (1 bit)
-    uint8 internal constant SHIFT_ENHANCED_PRESENT = 238;
+    uint8 public constant SHIFT_ENHANCED_PRESENT = 238;
 
     /// @dev The bit index within off-chain flags that indicates payload validity.
-    uint8 internal constant OFFCHAIN_VALID_BIT = 0;
+    uint8 public constant OFFCHAIN_VALID_BIT = 0;
 
     // --- Color Palette ---
-    string internal constant C_INFO = "#3fb950";
-    string internal constant C_WARN = "#f4b942";
-    string internal constant C_MED = "#f97316";
-    string internal constant C_CRIT = "#ef4444";
-    string internal constant C_ACCENT = "#38bdf8";
-    string internal constant C_TOKEN = "#c084fc";
-    string internal constant C_TEXT = "#f0f6fc";
-    string internal constant C_MUTED = "#8b949e";
+    string public constant C_INFO = "#3fb950";
+    string public constant C_WARN = "#f4b942";
+    string public constant C_MED = "#f97316";
+    string public constant C_CRIT = "#ef4444";
+    string public constant C_ACCENT = "#38bdf8";
+    string public constant C_TOKEN = "#c084fc";
+    string public constant C_TEXT = "#f0f6fc";
+    string public constant C_MUTED = "#8b949e";
 
     /**
      * @notice Maps a risk category to its corresponding UI accent color.
      * @param category The decoded risk category.
      * @return hexColor The CSS hex color string.
      */
-    function getCategoryColor(PolicyRiskCategory category) internal pure returns (string memory) {
+    function getCategoryColor(PolicyRiskCategory category) public pure returns (string memory) {
         if (category == PolicyRiskCategory.INFO) return C_INFO;
         if (category == PolicyRiskCategory.WARNING) return C_WARN;
         if (category == PolicyRiskCategory.MEDIUM) return C_MED;
@@ -107,7 +107,7 @@ library SVGLib {
      * @param category The decoded risk category.
      * @return label The display string (e.g., "CRITICAL").
      */
-    function getCategoryLabel(PolicyRiskCategory category) internal pure returns (string memory) {
+    function getCategoryLabel(PolicyRiskCategory category) public pure returns (string memory) {
         if (category == PolicyRiskCategory.INFO) return "INFO";
         if (category == PolicyRiskCategory.WARNING) return "WARNING";
         if (category == PolicyRiskCategory.MEDIUM) return "MEDIUM";
@@ -119,10 +119,10 @@ library SVGLib {
      * @param kind The decoded policy kind (ERC4626, SWAP_V2, etc).
      * @return label The display string.
      */
-    function getPolicyKindLabel(PolicyKind kind) internal pure returns (string memory) {
-        if (kind == PolicyKind.ERC4626) return "ERC4626";
-        if (kind == PolicyKind.SWAP_V2) return "SWAP V2";
-        return "LIQUIDITY V2";
+    function getPolicyKindLabel(PolicyKind kind) public pure returns (string memory) {
+        if (kind == PolicyKind.ERC4626) return "ERC4626 Vault";
+        if (kind == PolicyKind.SWAP_V2) return "V2 SWAP";
+        return "V2 LIQUIDITY";
     }
 
     /**
@@ -131,7 +131,7 @@ library SVGLib {
      * @param operation The operation index.
      * @return label The display string (e.g., "DEPOSIT", "EXACT TOKENS IN").
      */
-    function getOperationLabel(PolicyKind kind, uint8 operation) internal pure returns (string memory) {
+    function getOperationLabel(PolicyKind kind, uint8 operation) public pure returns (string memory) {
         if (kind == PolicyKind.ERC4626) {
             if (operation == 0) return "DEPOSIT";
             if (operation == 1) return "MINT";
@@ -139,17 +139,18 @@ library SVGLib {
             return "REDEEM";
         }
         if (kind == PolicyKind.SWAP_V2) {
-            if (operation == 0) return "EXACT TOKENS IN";
-            if (operation == 1) return "EXACT TOKENS OUT";
-            if (operation == 2) return "EXACT ETH IN";
-            if (operation == 3) return "EXACT ETH OUT";
-            if (operation == 4) return "TOKENS FOR ETH";
-            return "TOKENS FOR EXACT ETH";
+            if (operation == 0) return "EXACT_TOKENS_IN";
+            if (operation == 1) return "EXACT_TOKENS_OUT";
+            if (operation == 2) return "EXACT_ETH_IN";
+            if (operation == 3) return "EXACT_ETH_OUT";
+            if (operation == 4) return "EXACT_TOKENS_FOR_ETH";
+            return "TOKENS_FOR_EXACT_ETH";
         }
+
         if (operation == 0) return "ADD";
-        if (operation == 1) return "ADD ETH";
+        if (operation == 1) return "ADD_ETH";
         if (operation == 2) return "REMOVE";
-        return "REMOVE ETH";
+        return "REMOVE_ETH";
     }
 
     /**
@@ -158,22 +159,22 @@ library SVGLib {
      * @param index The bit index of the flag.
      * @return label The descriptive label for the triggered finding.
      */
-    function getOnChainLabel(PolicyKind kind, uint8 index) internal pure returns (string memory) {
+    function getOnChainLabel(PolicyKind kind, uint8 index) public pure returns (string memory) {
         if (kind == PolicyKind.ERC4626) {
-            if (index == 0) return "Not Whitelisted";
+            if (index == 0) return "Vault Not Whitelisted";
             if (index == 1) return "Zero Supply";
             if (index == 2) return "Donation Attack";
-            if (index == 3) return "Inflation Risk";
-            if (index == 4) return "Balance Mismatch";
-            if (index == 5) return "Rate Anomaly";
+            if (index == 3) return "Share Inflation Risk";
+            if (index == 4) return "Vault Balance Mismatch";
+            if (index == 5) return "Exchange Rate Anomaly";
             if (index == 6) return "Preview Revert";
             if (index == 7) return "Zero Shares Out";
             if (index == 8) return "Zero Assets Out";
             if (index == 9) return "Dust Shares";
             if (index == 10) return "Dust Assets";
-            if (index == 11) return "Exceeds Max Dep";
-            if (index == 12) return "Exceeds Max Red";
-            if (index == 13) return "Convert Mismatch";
+            if (index == 11) return "Exceeds Max Deposit";
+            if (index == 12) return "Exceeds Max Redeem";
+            if (index == 13) return "Preview Convert Mismatch";
             return "";
         }
         if (kind == PolicyKind.SWAP_V2) {
@@ -188,7 +189,7 @@ library SVGLib {
             if (index == 8) return "Low LP Supply";
             if (index == 9) return "Pool Too New";
             if (index == 10) return "Severe Imbalance";
-            if (index == 11) return "K Broken";
+            if (index == 11) return "K Invariant Broken";
             if (index == 12) return "High Swap Impact";
             if (index == 13) return "Flashloan Risk";
             if (index == 14) return "Price Manipulated";
@@ -201,7 +202,7 @@ library SVGLib {
         if (index == 4) return "Low LP Supply";
         if (index == 5) return "First Depositor";
         if (index == 6) return "Severe Imbalance";
-        if (index == 7) return "K Broken";
+        if (index == 7) return "K Invariant Broken";
         if (index == 8) return "Pool Too New";
         if (index == 9) return "Ratio Deviation";
         if (index == 10) return "High LP Impact";
@@ -219,7 +220,7 @@ library SVGLib {
      * @param index The bit index of the flag.
      * @return isCritical True if the finding should be rendered as critical.
      */
-    function isOnChainCritical(PolicyKind kind, uint8 operation, uint8 index) internal pure returns (bool) {
+    function isOnChainCritical(PolicyKind kind, uint8 operation, uint8 index) public pure returns (bool) {
         if (kind == PolicyKind.ERC4626) {
             if (index == 2 || index == 4 || index == 6) return true;
             if (index == 7) return operation == 0 || operation == 1;
@@ -239,32 +240,32 @@ library SVGLib {
      * @param index The bit index of the flag.
      * @return label The descriptive label.
      */
-    function getOffChainLabel(uint8 index) internal pure returns (string memory) {
+    function getOffChainLabel(uint8 index) public pure returns (string memory) {
         if (index == 1) return "Delegatecall";
         if (index == 2) return "Selfdestruct";
         if (index == 3) return "Approval Drain";
         if (index == 4) return "Owner Sweep";
         if (index == 5) return "Reentrancy";
-        if (index == 6) return "Unexp Create";
+        if (index == 6) return "Unexpected Create/Create2";
         if (index == 7) return "Upgrade Call";
         if (index == 8) return "Exit Frozen";
         if (index == 9) return "Remove Frozen";
         if (index == 10) return "First Deposit";
         if (index == 11) return "Price Impact";
-        if (index == 12) return "Out Discrepancy";
-        if (index == 13) return "Ratio Dev";
-        if (index == 14) return "Sim Revert";
-        if (index == 15) return "FoT Risk";
+        if (index == 12) return "Output Discrepancy";
+        if (index == 13) return "Ratio Deviation";
+        if (index == 14) return "Simulation Reverted";
+        if (index == 15) return "Fee-On-Transfer Risk";
         if (index == 16) return "Stale Oracle";
-        if (index == 17) return "Unverified";
-        if (index == 18) return "Price Dev";
+        if (index == 17) return "Contract Unverified";
+        if (index == 18) return "Price Deviation";
         if (index == 19) return "Excess Pull";
-        if (index == 20) return "Crit Oracle";
+        if (index == 20) return "Critical Oracle";
         if (index == 21) return "Large Sweep";
         if (index == 22) return "Zero Headroom";
-        if (index == 23) return "Hard Block";
-        if (index == 24) return "Confirmed FoT";
-        if (index == 25) return "Drift High";
+        if (index == 23) return "Hard Block simulation Revert";
+        if (index == 24) return "Confirmed Fee-On-Transfer";
+        if (index == 25) return "Share Price Drift High";
         if (index == 26) return "Honeypot";
         return "";
     }
@@ -274,7 +275,7 @@ library SVGLib {
      * @param index The bit index of the flag.
      * @return isCritical True if the finding is critical.
      */
-    function isOffChainCritical(uint8 index) internal pure returns (bool) {
+    function isOffChainCritical(uint8 index) public pure returns (bool) {
         return index == 1 || index == 2 || index == 3 || index == 4 || index == 5 || index == 6 || index == 7
             || index == 8 || index == 9 || index == 14 || index == 20 || index == 21 || index == 23 || index == 26;
     }
@@ -284,7 +285,7 @@ library SVGLib {
      * @param index The bit index of the flag.
      * @return label The descriptive label.
      */
-    function getTokenLabel(uint8 index) internal pure returns (string memory) {
+    function getTokenLabel(uint8 index) public pure returns (string memory) {
         if (index == 0) return "Not Contract";
         if (index == 1) return "Empty Bytecode";
         if (index == 2) return "Decimals Revert";
@@ -293,21 +294,21 @@ library SVGLib {
         if (index == 5) return "Supply Revert";
         if (index == 6) return "Zero Supply";
         if (index == 7) return "Low Supply";
-        if (index == 8) return "Sym Revert";
+        if (index == 8) return "Symbol Revert";
         if (index == 9) return "Name Revert";
         if (index == 10) return "1967 Proxy";
         if (index == 11) return "1822 Proxy";
-        if (index == 12) return "Min Proxy";
+        if (index == 12) return "Minimal Proxy";
         if (index == 13) return "Has Owner";
-        if (index == 14) return "Renounced";
+        if (index == 14) return "Ownership Renounced";
         if (index == 15) return "EOA Owner";
         if (index == 16) return "Pausable";
         if (index == 17) return "Paused";
         if (index == 18) return "Blacklist";
         if (index == 19) return "Blocklist";
-        if (index == 20) return "Poss FoT";
+        if (index == 20) return "Possible Fee-On-Transfer";
         if (index == 21) return "Fee Getter";
-        if (index == 22) return "Tax Func";
+        if (index == 22) return "Tax Function";
         if (index == 23) return "Rebasing";
         if (index == 24) return "Mintable";
         if (index == 25) return "Burnable";
@@ -321,7 +322,7 @@ library SVGLib {
      * @param index The bit index of the flag.
      * @return isCritical True if the finding is critical.
      */
-    function isTokenCritical(uint8 index) internal pure returns (bool) {
+    function isTokenCritical(uint8 index) public pure returns (bool) {
         return index == 0 || index == 1 || index == 4 || index == 5 || index == 6 || index == 17;
     }
 
@@ -330,12 +331,12 @@ library SVGLib {
      * @param tier The tier value (0-5).
      * @return label The display string (e.g., "HIGH", "EXTREME").
      */
-    function getTierLabel(uint8 tier) internal pure returns (string memory) {
+    function getTierLabel(uint8 tier) public pure returns (string memory) {
         if (tier == 0) return "NONE";
         if (tier == 1) return "LOW";
-        if (tier == 2) return "MED";
+        if (tier == 2) return "MEDIUM";
         if (tier == 3) return "HIGH";
-        if (tier == 4) return "CRIT";
+        if (tier == 4) return "CRITICAL";
         return "EXTREME";
     }
 }

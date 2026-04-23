@@ -11,8 +11,9 @@ import {ISVGRenderer, RenderContext} from "./interfaces/ISVGRenderer.sol";
 
 /**
  * @title SVGRenderer
- * @notice Redesigned and split renderer for PreFlight Risk Report NFTs.
- *         Uses SVGLib for labels and SVGParts for UI components to avoid 24KB limit.
+ * @author Sourav-IITBPL
+ * @notice Redesigned renderer for PreFlight Risk Report NFTs.
+ *         Uses SVGLib for labels and SVGParts for UI components .
  */
 contract SVGRenderer is ISVGRenderer {
     using Strings for uint256;
@@ -83,14 +84,14 @@ contract SVGRenderer is ISVGRenderer {
         string memory categoryColor = SVGLib.getCategoryColor(report.finalCategory);
         string memory kindLabel = SVGLib.getPolicyKindLabel(report.kind);
         string memory opLabel = SVGLib.getOperationLabel(report.kind, report.operation);
-        string memory catLabel = SVGLib.getCategoryLabel(report.finalCategory);
+        string memory categoryLabel = SVGLib.getCategoryLabel(report.finalCategory);
 
         return string(
             abi.encodePacked(
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1280" width="1000" height="1280" fill="none">',
                 SVGParts.getDefs(),
                 '<rect width="1000" height="1280" rx="30" fill="url(#bg)"/>',
-                SVGParts.getHeader(tokenId, kindLabel, opLabel, categoryColor, catLabel),
+                SVGParts.getHeader(tokenId, kindLabel, opLabel, categoryColor, categoryLabel),
                 SVGParts.getScoreMeter(report.compositeScore, categoryColor),
                 SVGParts.getMetricCards(
                     report.onChainScore, report.offChainScore, report.tokenRiskEvaluated ? report.onChainScore : 0
@@ -143,7 +144,7 @@ contract SVGRenderer is ISVGRenderer {
                     : (section == 1 ? SVGLib.getOffChainLabel(i) : SVGLib.getTokenLabel(i));
 
                 if (bytes(label).length > 0) {
-                    bool crit = section == 0
+                    bool critical = section == 0
                         ? SVGLib.isOnChainCritical(report.kind, report.operation, i)
                         : (section == 1 ? SVGLib.isOffChainCritical(i) : SVGLib.isTokenCritical(i));
 
@@ -155,7 +156,7 @@ contract SVGRenderer is ISVGRenderer {
                     if (rowY < y + h - 20) {
                         content = string(
                             abi.encodePacked(
-                                content, SVGParts.getChip(x, rowY, label, crit ? SVGLib.C_CRIT : color, crit)
+                                content, SVGParts.getChip(x, rowY, label, critical ? SVGLib.C_CRIT : color, critical)
                             )
                         );
                         x += w + 12;
@@ -184,10 +185,10 @@ contract SVGRenderer is ISVGRenderer {
         return string(
             abi.encodePacked(
                 '<text x="60" y="1135" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#8b949e">SEVERITY TIERS</text>',
-                _tierBox(180, 1122, "ECON", report.economicSeverityTier),
+                _tierBox(180, 1122, "ECONOMIC", report.economicSeverityTier),
                 _tierBox(320, 1122, "ORACLE", report.oracleAgeTier),
-                _tierBox(460, 1122, "PULL", report.excessPullTier),
-                _tierBox(600, 1122, "DRIFT", report.sharePriceDriftTier),
+                _tierBox(460, 1122, "EXCESS PULL", report.excessPullTier),
+                _tierBox(600, 1122, "SHARE PRICE DRIFT", report.sharePriceDriftTier),
                 _tierBox(740, 1122, "SWEEP", report.sweepSeverityTier)
             )
         );
@@ -228,7 +229,11 @@ contract SVGRenderer is ISVGRenderer {
     }
 
     function _name(uint256 tokenId, DecodedReport memory report) internal pure returns (string memory) {
-        return string(abi.encodePacked("PreFlight ", SVGLib.getPolicyKindLabel(report.kind), " #", tokenId.toString()));
+        return string(
+            abi.encodePacked(
+                "PreFlight Risk Report: ", SVGLib.getPolicyKindLabel(report.kind), " #", tokenId.toString()
+            )
+        );
     }
 
     function _description(DecodedReport memory report) internal pure returns (string memory) {

@@ -515,87 +515,7 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
         }
 
         for (uint256 i = 0; i < len - 1;) {
-            address tokenIn = path[i];
-            address tokenOut = path[i + 1];
-
-            address pair = IUniswapV2Factory(factory).getPair(tokenIn, tokenOut);
-
-            if (pair == address(0)) {
-                result.POOL_NOT_EXISTS = true;
-                unchecked {
-                    ++i;
-                }
-                continue;
-            }
-
-            uint112 r0;
-            uint112 r1;
-            uint32 blockTimestampLast;
-            address token0;
-            {
-                IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
-
-                // Factory stored inside the pair must match the router's factory.
-                if (pairContract.factory() != factory) {
-                    result.FACTORY_MISMATCH = true;
-                    unchecked {
-                        ++i;
-                    }
-                    continue;
-                }
-
-                (r0, r1, blockTimestampLast) = pairContract.getReserves();
-
-                if (r0 == 0 || r1 == 0) {
-                    result.ZERO_LIQUIDITY = true;
-                    unchecked {
-                        ++i;
-                    }
-                    continue;
-                }
-
-                token0 = pairContract.token0();
-            }
-
-            // this will check the token
-            result.tokenResult[i] = tokenGuard.checkToken(tokenIn);
-
-            {
-                uint8 poolFlags = _checkPoolState(pair, r0, r1, blockTimestampLast);
-                if ((poolFlags & 1) != 0) result.LOW_LIQUIDITY = true;
-                if ((poolFlags & 2) != 0) result.SEVERE_IMBALANCE = true;
-                if ((poolFlags & 4) != 0) result.LOW_LP_SUPPLY = true;
-                if ((poolFlags & 8) != 0) result.POOL_TOO_NEW = true;
-                if ((poolFlags & 16) != 0) result.K_INVARIANT_BROKEN = true;
-                if ((poolFlags & 32) != 0) result.FLASHLOAN_RISK = true;
-            }
-
-            if (i == len - 2) {
-                // also check the final output token
-                result.tokenResult[i + 1] = tokenGuard.checkToken(tokenOut);
-            }
-
-            //  Swap impact
-            if (amount > 0 && i == 0 && isExactTokenIn) {
-                // Check impact only on the first hop (subsequent hops depend on output).
-                uint256 reserveIn = (tokenIn == token0) ? uint256(r0) : uint256(r1);
-                if (_isHighImpact(amount, reserveIn)) {
-                    result.HIGH_SWAP_IMPACT = true;
-                }
-            }
-
-            //Swap impact of last pair  for !isExactTokenIn
-            if (amount > 0 && i == len - 2 && !isExactTokenIn) {
-                // Check impact only on the first hop (subsequent hops depend on output).
-                uint256 reserveIn = (tokenOut == token0) ? uint256(r0) : uint256(r1);
-                if (_isHighImpact(amount, reserveIn)) {
-                    result.HIGH_SWAP_IMPACT = true;
-                }
-            }
-
-            if (_isPriceManipulated(pair, tokenIn, r0, r1, blockTimestampLast)) {
-                result.PRICE_MANIPULATED = true;
-            }
+            result = _checkSwapStep(path[i], path[i + 1], factory, i, len, amount, isExactTokenIn, result);
 
             unchecked {
                 ++i;
@@ -611,6 +531,89 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
         }
 
         emit SwapCheckPerformed(router, path, amount, result);
+    }
+
+    function _checkSwapStep(
+        address tokenIn,
+        address tokenOut,
+        address factory,
+        uint256 i,
+        uint256 len,
+        uint256 amount,
+        bool isExactTokenIn,
+        SwapV2GuardResult memory result
+    ) internal view returns (SwapV2GuardResult memory) {
+        address pair = IUniswapV2Factory(factory).getPair(tokenIn, tokenOut);
+
+        if (pair == address(0)) {
+            result.POOL_NOT_EXISTS = true;
+            return result;
+        }
+
+        uint112 r0;
+        uint112 r1;
+        uint32 blockTimestampLast;
+        address token0;
+        {
+            IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
+
+            // Factory stored inside the pair must match the router's factory.
+            if (pairContract.factory() != factory) {
+                result.FACTORY_MISMATCH = true;
+                return result;
+            }
+
+            (r0, r1, blockTimestampLast) = pairContract.getReserves();
+
+            if (r0 == 0 || r1 == 0) {
+                result.ZERO_LIQUIDITY = true;
+                return result;
+            }
+
+            token0 = pairContract.token0();
+        }
+
+        // this will check the token
+        result.tokenResult[i] = tokenGuard.checkToken(tokenIn);
+
+        {
+            uint8 poolFlags = _checkPoolState(pair, r0, r1, blockTimestampLast);
+            if ((poolFlags & 1) != 0) result.LOW_LIQUIDITY = true;
+            if ((poolFlags & 2) != 0) result.SEVERE_IMBALANCE = true;
+            if ((poolFlags & 4) != 0) result.LOW_LP_SUPPLY = true;
+            if ((poolFlags & 8) != 0) result.POOL_TOO_NEW = true;
+            if ((poolFlags & 16) != 0) result.K_INVARIANT_BROKEN = true;
+            if ((poolFlags & 32) != 0) result.FLASHLOAN_RISK = true;
+        }
+
+        if (i == len - 2) {
+            // also check the final output token
+            result.tokenResult[i + 1] = tokenGuard.checkToken(tokenOut);
+        }
+
+        //  Swap impact
+        if (amount > 0 && i == 0 && isExactTokenIn) {
+            // Check impact only on the first hop (subsequent hops depend on output).
+            uint256 reserveIn = (tokenIn == token0) ? uint256(r0) : uint256(r1);
+            if (_isHighImpact(amount, reserveIn)) {
+                result.HIGH_SWAP_IMPACT = true;
+            }
+        }
+
+        //Swap impact of last pair  for !isExactTokenIn
+        if (amount > 0 && i == len - 2 && !isExactTokenIn) {
+            // Check impact only on the first hop (subsequent hops depend on output).
+            uint256 reserveIn = (tokenOut == token0) ? uint256(r0) : uint256(r1);
+            if (_isHighImpact(amount, reserveIn)) {
+                result.HIGH_SWAP_IMPACT = true;
+            }
+        }
+
+        if (_isPriceManipulated(pair, tokenIn, r0, r1, blockTimestampLast)) {
+            result.PRICE_MANIPULATED = true;
+        }
+
+        return result;
     }
 
     /**

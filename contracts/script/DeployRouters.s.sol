@@ -8,12 +8,10 @@ import {SwapV2Router} from "../src/preflightRouters/V2Routers/SwapV2Router.sol";
 import {LiquidityV2Router} from "../src/preflightRouters/V2Routers/LiquidityV2Router.sol";
 import {BaseDeployScript} from "./BaseDeployScript.s.sol";
 import {
-    ERC4626_VAULT_GUARD_ADDRESS,
-    LIQUIDITY_V2_GUARD_ADDRESS,
-    ERC4626_RISK_POLICY_ADDRESS,
-    LIQUIDITY_V2_RISK_POLICY_ADDRESS,
-    SWAP_V2_RISK_POLICY_ADDRESS,
-    RISK_REPORT_NFT_ADDRESS,
+    BASE_SWAP_V2_RISK_POLICY_ADDRESS,
+    BASE_ERC4626_RISK_POLICY_ADDRESS,
+    BASE_LIQUIDITY_V2_RISK_POLICY_ADDRESS,
+    BASE_SWAP_V2_GUARD_ADDRESS,
     BASE_ERC4626_VAULT_GUARD_ADDRESS,
     BASE_LIQUIDITY_V2_GUARD_ADDRESS,
     BASE_RISK_REPORT_NFT_ADDRESS
@@ -24,15 +22,15 @@ contract DeployRouters is BaseDeployScript {
         vm.startBroadcast(_privateKey());
         erc4626Router = address(
             new ERC4626Router(
-                BASE_ERC4626_VAULT_GUARD_ADDRESS, ERC4626_RISK_POLICY_ADDRESS, BASE_RISK_REPORT_NFT_ADDRESS
+                BASE_ERC4626_VAULT_GUARD_ADDRESS, BASE_ERC4626_RISK_POLICY_ADDRESS, BASE_RISK_REPORT_NFT_ADDRESS
             )
         );
         swapV2Router = address(
-            new SwapV2Router(BASE_LIQUIDITY_V2_GUARD_ADDRESS, SWAP_V2_RISK_POLICY_ADDRESS, BASE_RISK_REPORT_NFT_ADDRESS)
+            new SwapV2Router(BASE_SWAP_V2_GUARD_ADDRESS, BASE_SWAP_V2_RISK_POLICY_ADDRESS, BASE_RISK_REPORT_NFT_ADDRESS)
         );
         liquidityV2Router = address(
             new LiquidityV2Router(
-                BASE_LIQUIDITY_V2_GUARD_ADDRESS, LIQUIDITY_V2_RISK_POLICY_ADDRESS, BASE_RISK_REPORT_NFT_ADDRESS
+                BASE_LIQUIDITY_V2_GUARD_ADDRESS, BASE_LIQUIDITY_V2_RISK_POLICY_ADDRESS, BASE_RISK_REPORT_NFT_ADDRESS
             )
         );
         vm.stopBroadcast();

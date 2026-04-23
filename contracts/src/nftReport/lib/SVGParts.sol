@@ -6,7 +6,7 @@ import "./SVGLib.sol";
 
 /**
  * @title SVGParts
- * @author PreFlight Team
+ * @author Sourav-IIITBPL
  * @notice Reusable UI components and primitives for the PreFlight Risk Report SVG.
  * @dev These components use glassmorphism effects (transparency + blur) and standard
  *      CSS-like primitives to build a modern, interactive-feeling report on-chain.
@@ -146,7 +146,7 @@ library SVGParts {
      * @return card The SVG card primitive.
      */
     function getMetricCard(uint256 x, uint256 y, uint256 w, string memory label, uint8 score, string memory color)
-        internal
+        public
         pure
         returns (string memory)
     {

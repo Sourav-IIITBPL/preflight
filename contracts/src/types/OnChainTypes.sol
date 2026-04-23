@@ -102,6 +102,7 @@ enum PolicyRiskCategory {
 }
 
 /// @notice Identifies which policy family produced a packed risk report.
+
 enum PolicyKind {
     ERC4626,
     SWAP_V2,

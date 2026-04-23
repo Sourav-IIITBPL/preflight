@@ -40,7 +40,6 @@ contract RiskReportNFT is ERC721, Ownable {
 
     uint256 private _nextTokenId;
     mapping(uint256 => StoredRiskReport) private _storedReports;
-    
 
     /// @notice Emitted when the owner updates minting permission for an address.
     /// @param minter Address whose minting permission changed.
