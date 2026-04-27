@@ -16,9 +16,17 @@ contract MockERC4626Vault {
     uint256 internal _previewMint;
     uint256 internal _previewWithdraw;
     uint256 internal _previewRedeem;
+    
+    bool internal _usePreviewDeposit;
+    bool internal _usePreviewMint;
+    bool internal _usePreviewWithdraw;
+    bool internal _usePreviewRedeem;
 
     uint256 internal _convertToShares;
     uint256 internal _convertToAssets;
+    
+    bool internal _useConvertToShares;
+    bool internal _useConvertToAssets;
 
     bool internal _revertPreviewDeposit;
     bool internal _revertPreviewMint;
@@ -64,23 +72,23 @@ contract MockERC4626Vault {
         return 0;
     }
 
-    function convertToShares(uint256) external view returns (uint256) {
+    function convertToShares(uint256 assets) external view returns (uint256) {
         require(!_revertConvertToShares, "CONVERT_TO_SHARES_REVERT");
-        return _convertToShares;
+        return _useConvertToShares ? _convertToShares : assets;
     }
 
-    function convertToAssets(uint256) external view returns (uint256) {
+    function convertToAssets(uint256 shares) external view returns (uint256) {
         require(!_revertConvertToAssets, "CONVERT_TO_ASSETS_REVERT");
-        return _convertToAssets;
+        return _useConvertToAssets ? _convertToAssets : shares;
     }
 
     function maxDeposit(address) external view returns (uint256) {
-        return _maxDeposit;
+        return _maxDeposit == 0 ? type(uint256).max : _maxDeposit;
     }
 
-    function previewDeposit(uint256) external view returns (uint256) {
+    function previewDeposit(uint256 assets) external view returns (uint256) {
         require(!_revertPreviewDeposit, "PREVIEW_DEPOSIT_REVERT");
-        return _previewDeposit;
+        return _usePreviewDeposit ? _previewDeposit : assets;
     }
 
     function deposit(uint256, address) external pure returns (uint256) {
@@ -88,12 +96,12 @@ contract MockERC4626Vault {
     }
 
     function maxMint(address) external view returns (uint256) {
-        return _maxMint;
+        return _maxMint == 0 ? type(uint256).max : _maxMint;
     }
 
-    function previewMint(uint256) external view returns (uint256) {
+    function previewMint(uint256 shares) external view returns (uint256) {
         require(!_revertPreviewMint, "PREVIEW_MINT_REVERT");
-        return _previewMint;
+        return _usePreviewMint ? _previewMint : shares;
     }
 
     function mint(uint256, address) external pure returns (uint256) {
@@ -101,12 +109,12 @@ contract MockERC4626Vault {
     }
 
     function maxWithdraw(address) external view returns (uint256) {
-        return _maxWithdraw;
+        return _maxWithdraw == 0 ? type(uint256).max : _maxWithdraw;
     }
 
-    function previewWithdraw(uint256) external view returns (uint256) {
+    function previewWithdraw(uint256 assets) external view returns (uint256) {
         require(!_revertPreviewWithdraw, "PREVIEW_WITHDRAW_REVERT");
-        return _previewWithdraw;
+        return _usePreviewWithdraw ? _previewWithdraw : assets;
     }
 
     function withdraw(uint256, address, address) external pure returns (uint256) {
@@ -114,12 +122,12 @@ contract MockERC4626Vault {
     }
 
     function maxRedeem(address) external view returns (uint256) {
-        return _maxRedeem;
+        return _maxRedeem == 0 ? type(uint256).max : _maxRedeem;
     }
 
-    function previewRedeem(uint256) external view returns (uint256) {
+    function previewRedeem(uint256 shares) external view returns (uint256) {
         require(!_revertPreviewRedeem, "PREVIEW_REDEEM_REVERT");
-        return _previewRedeem;
+        return _usePreviewRedeem ? _previewRedeem : shares;
     }
 
     function redeem(uint256, address, address) external pure returns (uint256) {
@@ -148,11 +156,17 @@ contract MockERC4626Vault {
         _previewMint = previewMint_;
         _previewWithdraw = previewWithdraw_;
         _previewRedeem = previewRedeem_;
+        _usePreviewDeposit = true;
+        _usePreviewMint = true;
+        _usePreviewWithdraw = true;
+        _usePreviewRedeem = true;
     }
 
     function setConvertValues(uint256 convertToShares_, uint256 convertToAssets_) external {
         _convertToShares = convertToShares_;
         _convertToAssets = convertToAssets_;
+        _useConvertToShares = true;
+        _useConvertToAssets = true;
     }
 
     function setPreviewReverts(

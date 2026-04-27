@@ -10,7 +10,10 @@ import {
     FeatureRichTokenSample,
     RenouncedOwnerTokenSample,
     CloneImplementationSample,
-    CloneFactorySample
+    CloneFactorySample,
+    RevertingTokenSample,
+    ZeroSupplyTokenSample,
+    BrokenOwnerTokenSample
 } from "../mocks/TokenGuardHarnesses.sol";
 
 contract TokenGuardLibraryTest is Test {
@@ -24,6 +27,31 @@ contract TokenGuardLibraryTest is Test {
         TokenGuardResult memory result = harness.check(address(0x1234));
         assertTrue(result.NOT_A_CONTRACT);
         assertTrue(result.EMPTY_BYTECODE);
+    }
+
+    function test_revertingTokenFlagsReverts() public {
+        RevertingTokenSample token = new RevertingTokenSample();
+        TokenGuardResult memory result = harness.check(address(token));
+
+        assertTrue(result.NAME_REVERT);
+        assertTrue(result.SYMBOL_REVERT);
+        assertTrue(result.DECIMALS_REVERT);
+        assertTrue(result.TOTAL_SUPPLY_REVERT);
+    }
+
+    function test_zeroSupplyTokenFlagsZeroSupply() public {
+        ZeroSupplyTokenSample token = new ZeroSupplyTokenSample();
+        TokenGuardResult memory result = harness.check(address(token));
+
+        assertTrue(result.ZERO_TOTAL_SUPPLY);
+    }
+
+    function test_brokenOwnerTokenFlagsNonEoaOwner() public {
+        BrokenOwnerTokenSample token = new BrokenOwnerTokenSample();
+        TokenGuardResult memory result = harness.check(address(token));
+
+        assertTrue(result.HAS_OWNER);
+        assertFalse(result.OWNER_IS_EOA);
     }
 
     function test_featureRichTokenSetsAdministrativeAndHeuristicFlags() public {

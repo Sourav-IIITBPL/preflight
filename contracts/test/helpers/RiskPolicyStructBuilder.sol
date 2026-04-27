@@ -53,12 +53,15 @@ abstract contract RiskPolicyStructBuilder {
         result.riskLevel = RiskLevel.WARNING;
         result.riskScore = 44;
         result.operation = VaultOpType.DEPOSIT;
+        
+        address[] memory emptyAddrs = new address[](0);
+
         result.trace = VaultTraceFindings({
             hasDangerousDelegateCall: true,
             delegateCallTarget: address(0),
             hasSelfDestruct: false,
             hasUnexpectedCreate: false,
-            createAddresses: new address[](0),
+            createAddresses: emptyAddrs,
             hasApprovalDrain: true,
             approvalDrainSpender: address(0),
             hasReentrancy: false,
@@ -69,9 +72,10 @@ abstract contract RiskPolicyStructBuilder {
             hasUpgradeCall: true,
             upgradeTarget: address(0)
         });
+        
         result.economic = VaultEconomicFindings({
             simulationReverted: false,
-            revertReason: "",
+            revertReason: "none",
             primaryOutput: 0,
             primaryExpected: 0,
             outputDiscrepancyBps: 620,
@@ -79,8 +83,8 @@ abstract contract RiskPolicyStructBuilder {
             sharePriceAfter: 0,
             sharePriceDriftBps: 700,
             isExitFrozen: false,
-            exitRevertReason: "",
-            exitSimulatedOut: 0,
+            exitRevertReason: "none",
+            exitSimulatedOut: 1,
             actualAssetPull: 0,
             excessPullBps: 900,
             assetPriceUSD: 2e18,
@@ -98,20 +102,24 @@ abstract contract RiskPolicyStructBuilder {
         result.riskLevel = RiskLevel.WARNING;
         result.riskScore = 37;
         result.operation = SwapOpType.EXACT_TOKENS_IN;
+        
+        address[] memory emptyAddrs = new address[](0);
+
         result.trace = SwapTraceFindings({
             hasDangerousDelegateCall: false,
             delegateCallTarget: address(0),
             hasSelfDestruct: true,
             hasUnexpectedCreate: true,
-            createAddresses: new address[](0),
+            createAddresses: emptyAddrs,
             hasApprovalDrain: false,
             approvalDrainSpender: address(0),
             hasReentrancy: true,
             reentrancyAddress: address(0)
         });
+        
         result.economic = SwapEconomicFindings({
             simulationReverted: false,
-            revertReason: "",
+            revertReason: "none",
             actualAmountIn: 0,
             actualAmountOut: 800e18,
             inputHeadroomBps: 0,
@@ -140,12 +148,15 @@ abstract contract RiskPolicyStructBuilder {
         result.riskLevel = RiskLevel.WARNING;
         result.riskScore = 39;
         result.operation = LiquidityOpType.ADD;
+        
+        address[] memory emptyAddrs = new address[](0);
+
         result.trace = LiquidityTraceFindings({
             hasDangerousDelegateCall: true,
             delegateCallTarget: address(0),
             hasSelfDestruct: false,
             hasUnexpectedCreate: true,
-            createAddresses: new address[](0),
+            createAddresses: emptyAddrs,
             hasApprovalDrain: true,
             approvalDrainSpender: address(0),
             hasReentrancy: false,
@@ -154,9 +165,10 @@ abstract contract RiskPolicyStructBuilder {
             sweepAmount: 100e18,
             sweepToken: address(0)
         });
+        
         result.economic = LiquidityEconomicFindings({
             simulationReverted: false,
-            revertReason: "",
+            revertReason: "none",
             actualAmountA: 0,
             actualAmountB: 0,
             actualLPMinted: 0,
@@ -176,7 +188,7 @@ abstract contract RiskPolicyStructBuilder {
             oracleRatio: 0,
             ratioDeviationBps: 900,
             isRemovalFrozen: false,
-            removalRevertReason: "",
+            removalRevertReason: "none",
             removalSimAmountA: 0,
             removalSimAmountB: 0,
             tokenAPriceUSD: 2e18,
