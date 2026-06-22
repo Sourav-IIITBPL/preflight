@@ -208,6 +208,7 @@ contract LiquidityV2RiskPolicy is BaseRiskPolicy {
         report.offChain = offChain;
         report.tokenRisk = tokenRisk;
         report.operation = LiquidityOpType(core.operation);
+        report.enhancedView = _decodeEnhanced(packedReport);
         report.onChain = LiquidityV2OnChainView({
             routerNotTrusted: _isFlagSet(core.onChainFlagsPacked, FLAG_ROUTER_NOT_TRUSTED),
             pairNotExists: _isFlagSet(core.onChainFlagsPacked, FLAG_PAIR_NOT_EXISTS),

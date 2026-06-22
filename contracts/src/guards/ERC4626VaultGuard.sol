@@ -66,6 +66,7 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
     uint256 public constant DONATION_THRESHOLD = 1 ether;
     /// If assets-per-share > this factor of the expected 1:1 base rate, flag inflation.
     uint256 public constant INFLATION_FACTOR = 100; // 100x base rate
+    uint256 public constant MAX_CHECK_STALENESS_BLOCKS = 15; // if validateCheck is called more than this many blocks after storeCheck, it will be considered stale and revert.
 
     // STORAGE VARIABLES //
 
@@ -314,12 +315,20 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
                 uint8 vaultDec = _safeDecimals(ERC4626vault);
                 uint256 normAssets = _normalize(totalAssets, assetDec);
                 uint256 normSupply = _normalize(totalSupply, vaultDec);
-                // assetsPerShare in 1e18
-                uint256 assetsPerShare = (normAssets * 1e18) / normSupply;
-                // Ideally 1:1 in normalised terms.
-                // Flag if ratio > INFLATION_FACTOR × expected.
-                if (assetsPerShare > INFLATION_FACTOR * 1e18) {
-                    result.SHARE_INFLATION_RISK = true;
+
+                if (normSupply > 0) {
+                    // assetsPerShare in 1e18
+                    uint256 assetsPerShare = (normAssets * 1e18) / normSupply;
+                    // Ideally 1:1 in normalised terms.
+                    // Flag if ratio > INFLATION_FACTOR × expected.
+                    if (assetsPerShare > INFLATION_FACTOR * 1e18) {
+                        result.SHARE_INFLATION_RISK = true;
+                    }
+                } else {
+                    // If totalSupply is very small but totalAssets is not, that's also a red flag.
+                    if (normAssets > 0) {
+                        result.SHARE_INFLATION_RISK = true;
+                    }
                 }
             }
         }
@@ -346,9 +355,11 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
                         uint256 vaultRate = (_normalize(IERC4626(ERC4626vault).totalAssets(), assetDec) * 1e18)
                             / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
                         uint256 normShares = _normalize(previewShares, vaultDec);
-                        uint256 opRate = (_normalize(amount, assetDec) * 1e18) / normShares;
-                        if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
-                            result.EXCHANGE_RATE_ANOMALY = true;
+                        if (normShares > 0) {
+                            uint256 opRate = (_normalize(amount, assetDec) * 1e18) / normShares;
+                            if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
+                                result.EXCHANGE_RATE_ANOMALY = true;
+                            }
                         }
                     }
 
@@ -383,9 +394,11 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
                             / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
                         uint256 normAssetOuts = _normalize(previewAssets, assetDec);
                         uint256 normShares = _normalize(amount, vaultDec);
-                        uint256 opRate = (normAssetOuts * 1e18) / normShares;
-                        if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
-                            result.EXCHANGE_RATE_ANOMALY = true;
+                        if (normShares > 0) {
+                            uint256 opRate = (normAssetOuts * 1e18) / normShares;
+                            if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
+                                result.EXCHANGE_RATE_ANOMALY = true;
+                            }
                         }
                     }
 
@@ -420,9 +433,11 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
                             / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
                         uint256 normAssetsOut = _normalize(previewAssets, assetDec);
                         uint256 normShares = _normalize(amount, vaultDec);
-                        uint256 opRate = (normAssetsOut * 1e18) / normShares;
-                        if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
-                            result.EXCHANGE_RATE_ANOMALY = true;
+                        if (normShares > 0) {
+                            uint256 opRate = (normAssetsOut * 1e18) / normShares;
+                            if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
+                                result.EXCHANGE_RATE_ANOMALY = true;
+                            }
                         }
                     }
 
@@ -455,9 +470,11 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
                         uint256 vaultRate = (_normalize(IERC4626(ERC4626vault).totalAssets(), assetDec) * 1e18)
                             / _normalize(IERC4626(ERC4626vault).totalSupply(), vaultDec);
                         uint256 normShares = _normalize(previewShares, vaultDec);
-                        uint256 opRate = (_normalize(amount, assetDec) * 1e18) / normShares;
-                        if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
-                            result.EXCHANGE_RATE_ANOMALY = true;
+                        if (normShares > 0) {
+                            uint256 opRate = (_normalize(amount, assetDec) * 1e18) / normShares;
+                            if (_bpsDelta(vaultRate, opRate) > MAX_DEVIATION_BPS) {
+                                result.EXCHANGE_RATE_ANOMALY = true;
+                            }
                         }
                     }
 
@@ -476,7 +493,7 @@ contract ERC4626VaultGuard is Ownable, ReentrancyGuard {
     }
 
     function _validate(address vault, address user, uint256 amount, VaultOpType opType) internal view {
-        require(lastCheckBlock[vault][user] == block.number, "STALE_CHECK");
+        require(block.number - lastCheckBlock[vault][user] <= MAX_CHECK_STALENESS_BLOCKS, "STALE_CHECK");
 
         (VaultGuardResult memory result, uint256 pShares, uint256 pAssets) = _checkVault(vault, amount, opType, user);
 

@@ -80,11 +80,7 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
         packed &= ~(uint256(0xFFFFFFFF) << 174); // clear token
 
         RenderContext memory context = RenderContext({
-            packedReport: packed,
-            owner: address(0x1),
-            sourceMinter: address(0x2),
-            mintedAt: 10,
-            mintedBlock: 20
+            packedReport: packed, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 10, mintedBlock: 20
         });
 
         string memory uri = harness.build(999, context);
@@ -99,11 +95,7 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
         packed |= (uint256(0xFFFFFFFF) << 174);
 
         RenderContext memory context = RenderContext({
-            packedReport: packed,
-            owner: address(0x1),
-            sourceMinter: address(0x2),
-            mintedAt: 10,
-            mintedBlock: 20
+            packedReport: packed, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 10, mintedBlock: 20
         });
 
         string memory uri = harness.build(888, context);
@@ -112,22 +104,22 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
 
     function test_renderFindingsColors() public view {
         uint256 packed = erc4626Policy.evaluate("", _baseVaultGuardResult(), VaultOpType.DEPOSIT);
-        
+
         // Final category depends on composite score: 0-19 INFO, 20-39 WARNING, 40-69 MEDIUM, 70+ CRITICAL
         // Composite score is bits 64-71
-        
+
         uint256 packedInfo = (packed & ~(uint256(0xFF) << 64)) | (uint256(10) << 64);
         uint256 packedWarn = (packed & ~(uint256(0xFF) << 64)) | (uint256(30) << 64);
         uint256 packedMed = (packed & ~(uint256(0xFF) << 64)) | (uint256(50) << 64);
-        
+
         RenderContext memory ctx = RenderContext({
             packedReport: packedInfo, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 1, mintedBlock: 1
         });
         harness.build(1, ctx);
-        
+
         ctx.packedReport = packedWarn;
         harness.build(2, ctx);
-        
+
         ctx.packedReport = packedMed;
         harness.build(3, ctx);
     }
@@ -141,13 +133,9 @@ contract SVGRendererTest is Test, RiskPolicyStructBuilder {
         packed |= (uint256(3) << 225);
         packed |= (uint256(4) << 228);
         packed |= (uint256(5) << 235);
-        
+
         RenderContext memory context = RenderContext({
-            packedReport: packed,
-            owner: address(0x1),
-            sourceMinter: address(0x2),
-            mintedAt: 10,
-            mintedBlock: 20
+            packedReport: packed, owner: address(0x1), sourceMinter: address(0x2), mintedAt: 10, mintedBlock: 20
         });
 
         string memory uri = harness.build(777, context);

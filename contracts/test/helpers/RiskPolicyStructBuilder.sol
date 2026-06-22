@@ -53,7 +53,7 @@ abstract contract RiskPolicyStructBuilder {
         result.riskLevel = RiskLevel.WARNING;
         result.riskScore = 44;
         result.operation = VaultOpType.DEPOSIT;
-        
+
         address[] memory emptyAddrs = new address[](0);
 
         result.trace = VaultTraceFindings({
@@ -72,7 +72,7 @@ abstract contract RiskPolicyStructBuilder {
             hasUpgradeCall: true,
             upgradeTarget: address(0)
         });
-        
+
         result.economic = VaultEconomicFindings({
             simulationReverted: false,
             revertReason: "none",
@@ -102,7 +102,7 @@ abstract contract RiskPolicyStructBuilder {
         result.riskLevel = RiskLevel.WARNING;
         result.riskScore = 37;
         result.operation = SwapOpType.EXACT_TOKENS_IN;
-        
+
         address[] memory emptyAddrs = new address[](0);
 
         result.trace = SwapTraceFindings({
@@ -116,7 +116,7 @@ abstract contract RiskPolicyStructBuilder {
             hasReentrancy: true,
             reentrancyAddress: address(0)
         });
-        
+
         result.economic = SwapEconomicFindings({
             simulationReverted: false,
             revertReason: "none",
@@ -148,7 +148,7 @@ abstract contract RiskPolicyStructBuilder {
         result.riskLevel = RiskLevel.WARNING;
         result.riskScore = 39;
         result.operation = LiquidityOpType.ADD;
-        
+
         address[] memory emptyAddrs = new address[](0);
 
         result.trace = LiquidityTraceFindings({
@@ -165,7 +165,7 @@ abstract contract RiskPolicyStructBuilder {
             sweepAmount: 100e18,
             sweepToken: address(0)
         });
-        
+
         result.economic = LiquidityEconomicFindings({
             simulationReverted: false,
             revertReason: "none",

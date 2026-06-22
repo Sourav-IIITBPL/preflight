@@ -82,8 +82,7 @@ contract ERC4626VaultGuardTest is Test {
         vault.setAccounting(2 ether, 0);
         asset.setBalance(address(vault), 1 ether);
 
-        (VaultGuardResult memory result,,) =
-            guard.checkVault(address(vault), 1e18, VaultOpType.DEPOSIT);
+        (VaultGuardResult memory result,,) = guard.checkVault(address(vault), 1e18, VaultOpType.DEPOSIT);
 
         assertTrue(result.VAULT_NOT_WHITELISTED);
         assertTrue(result.VAULT_ZERO_SUPPLY);
@@ -119,7 +118,7 @@ contract ERC4626VaultGuardTest is Test {
         vault.setPreviewValues(0, 10, 0, 0); // dust assets
         vault.setConvertValues(0, 20); // mismatch
 
-        (VaultGuardResult memory result, , uint256 previewAssets) =
+        (VaultGuardResult memory result,, uint256 previewAssets) =
             guard.checkVault(address(vault), 10e18, VaultOpType.MINT);
 
         // For MINT, EXCEEDS_MAX_DEPOSIT is used as the flag for maxMint overflow
@@ -132,7 +131,7 @@ contract ERC4626VaultGuardTest is Test {
     function test_checkVaultRedeemFlags() public {
         vault.setMaxValues(type(uint256).max, type(uint256).max, type(uint256).max, 5e18);
         vault.setPreviewValues(0, 0, 0, 0); // zero assets out
-        
+
         (VaultGuardResult memory result,,) = guard.checkVault(address(vault), 10e18, VaultOpType.REDEEM);
 
         assertTrue(result.EXCEEDS_MAX_REDEEM);
@@ -140,9 +139,9 @@ contract ERC4626VaultGuardTest is Test {
     }
 
     function test_checkVaultWithdrawFlags() public {
-        vault.setMaxValues(type(uint256).max, type(uint256).max, type(uint256).max, 5e18);
+        vault.setMaxValues(type(uint256).max, type(uint256).max, 5e18, type(uint256).max);
         // set previewWithdraw to 0 explicitly
-        vault.setPreviewValues(0, 0, 0, 0); 
+        vault.setPreviewValues(0, 0, 0, 0);
 
         (VaultGuardResult memory result,,) = guard.checkVault(address(vault), 10e18, VaultOpType.WITHDRAW);
 
@@ -156,12 +155,8 @@ contract ERC4626VaultGuardTest is Test {
 
         guard.storeCheck(address(vault), user, 1e18, VaultOpType.DEPOSIT);
 
-        (
-            VaultGuardResult memory result,
-            uint256 previewShares,
-            uint256 previewAssets,
-            uint256 blockNo
-        ) = guard.getLastCheck(address(vault), user);
+        (VaultGuardResult memory result, uint256 previewShares, uint256 previewAssets, uint256 blockNo) =
+            guard.getLastCheck(address(vault), user);
 
         assertFalse(result.VAULT_NOT_WHITELISTED);
         assertEq(previewShares, 1e18);
@@ -181,7 +176,7 @@ contract ERC4626VaultGuardTest is Test {
         guard.validate(address(vault), user, 2e18, VaultOpType.DEPOSIT);
 
         // Mismatched opType -> we'll make previewWithdraw return something else
-        vault.setPreviewValues(0, 0, 555, 0); 
+        vault.setPreviewValues(0, 0, 555, 0);
         vm.expectRevert(bytes("VAULT_STATE_CHANGED"));
         guard.validate(address(vault), user, 1e18, VaultOpType.WITHDRAW);
     }
@@ -191,7 +186,7 @@ contract ERC4626VaultGuardTest is Test {
         guard.setAuthorizedRouter(router, true);
         guard.storeCheck(address(vault), user, 1e18, VaultOpType.DEPOSIT);
 
-        vm.roll(block.number + 1);
+        vm.roll(block.number + 16);
         vm.expectRevert(bytes("STALE_CHECK"));
         guard.validate(address(vault), user, 1e18, VaultOpType.DEPOSIT);
     }

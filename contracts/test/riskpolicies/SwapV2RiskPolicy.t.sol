@@ -100,6 +100,7 @@ contract SwapV2RiskPolicyTest is Test, RiskPolicyStructBuilder {
         SwapV2DecodedRiskReport memory report = policy.decode(packed);
 
         assertTrue(report.core.offChainValid);
+        assertTrue(report.enhancedView.enhancedDataPresent);
         assertFalse(report.offChain.hasSelfDestruct);
         assertFalse(report.offChain.hasUnexpectedCreate);
         assertFalse(report.offChain.hasReentrancy);
@@ -107,7 +108,6 @@ contract SwapV2RiskPolicyTest is Test, RiskPolicyStructBuilder {
         assertFalse(report.offChain.anyOracleStale);
         assertFalse(report.offChain.anyContractUnverified);
         assertFalse(report.offChain.oracleDeviation);
-        assertFalse(report.enhancedView.enhancedDataPresent);
         assertFalse(report.enhancedView.simulationRevertBlock);
     }
 

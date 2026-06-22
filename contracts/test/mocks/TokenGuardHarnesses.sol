@@ -31,25 +31,61 @@ contract CleanTokenSample {
 }
 
 contract RevertingTokenSample {
-    function name() external pure { revert(); }
-    function symbol() external pure { revert(); }
-    function decimals() external pure { revert(); }
-    function totalSupply() external pure { revert(); }
+    function name() external pure {
+        revert();
+    }
+
+    function symbol() external pure {
+        revert();
+    }
+
+    function decimals() external pure {
+        revert();
+    }
+
+    function totalSupply() external pure {
+        revert();
+    }
 }
 
 contract ZeroSupplyTokenSample {
-    function name() external pure returns (string memory) { return "Zero"; }
-    function symbol() external pure returns (string memory) { return "ZR"; }
-    function decimals() external pure returns (uint8) { return 18; }
-    function totalSupply() external pure returns (uint256) { return 0; }
+    function name() external pure returns (string memory) {
+        return "Zero";
+    }
+
+    function symbol() external pure returns (string memory) {
+        return "ZR";
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+
+    function totalSupply() external pure returns (uint256) {
+        return 0;
+    }
 }
 
 contract BrokenOwnerTokenSample {
-    function name() external pure returns (string memory) { return "Broken"; }
-    function symbol() external pure returns (string memory) { return "BKN"; }
-    function decimals() external pure returns (uint8) { return 18; }
-    function totalSupply() external pure returns (uint256) { return 100e18; }
-    function owner() external view returns (address) { return address(this); } // non-EOA owner
+    function name() external pure returns (string memory) {
+        return "Broken";
+    }
+
+    function symbol() external pure returns (string memory) {
+        return "BKN";
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+
+    function totalSupply() external pure returns (uint256) {
+        return 100e18;
+    }
+
+    function owner() external view returns (address) {
+        return address(this); // non-EOA owner
+    }
 }
 
 contract FeatureRichTokenSample {

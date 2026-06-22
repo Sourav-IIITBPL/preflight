@@ -183,9 +183,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         IERC20(path[0]).forceApprove(ammRouter, amountIn);
         amounts = IUniswapV2Router(ammRouter).swapExactTokensForTokens(amountIn, amountOutMin, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
-        if (amountOutMin > amounts[amounts.length - 1]) {
-            revert("INSUFFICIENT_OUTPUT_AMOUNT");
-        }
 
         emit GuardedSwapExecuted(
             msg.sender, ammRouter, receiver, SwapOpType.EXACT_TOKENS_IN, keccak256(abi.encode(path)), packedRiskReport
@@ -216,7 +213,7 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         _validateReceiver(receiver);
         _validateReceiver(refundRecipient);
 
-        swapGuard.validateSwapCheck(ammRouter, path, amountInMax, false, msg.sender);
+        swapGuard.validateSwapCheck(ammRouter, path, amountOut, false, msg.sender);
 
         IERC20(path[0]).safeTransferFrom(msg.sender, address(this), amountInMax);
         IERC20(path[0]).forceApprove(ammRouter, amountInMax);
@@ -339,10 +336,6 @@ contract SwapV2Router is Ownable, ReentrancyGuard {
         IERC20(path[0]).forceApprove(ammRouter, amountIn);
         amounts = IUniswapV2Router(ammRouter).swapExactTokensForETH(amountIn, amountOutMin, path, receiver, deadline);
         IERC20(path[0]).forceApprove(ammRouter, 0);
-
-        if (amountOutMin > amounts[amounts.length - 1]) {
-            revert("INSUFFICIENT_OUTPUT_AMOUNT");
-        }
 
         emit GuardedSwapExecuted(
             msg.sender,

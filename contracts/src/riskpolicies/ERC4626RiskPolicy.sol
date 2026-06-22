@@ -202,6 +202,7 @@ contract ERC4626RiskPolicy is BaseRiskPolicy {
         report.tokenRisk = tokenRisk;
         report.enhancedView = _decodeEnhanced(packedReport);
         report.operation = VaultOpType(core.operation);
+        report.enhancedView = _decodeEnhanced(packedReport);
         report.onChain = ERC4626OnChainView({
             vaultNotWhitelisted: _isFlagSet(core.onChainFlagsPacked, FLAG_VAULT_NOT_WHITELISTED),
             vaultZeroSupply: _isFlagSet(core.onChainFlagsPacked, FLAG_VAULT_ZERO_SUPPLY),

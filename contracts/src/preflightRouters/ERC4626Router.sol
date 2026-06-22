@@ -71,7 +71,7 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param riskReportNFT_ Address of the risk report NFT contract.
      */
     constructor(address vaultGuard_, address riskPolicy_, address riskReportNFT_) {
-        if (vaultGuard_ == address(0) || riskPolicy_ == address(0)) {
+        if (vaultGuard_ == address(0) || riskPolicy_ == address(0) || riskReportNFT_ == address(0)) {
             revert ZeroAddress();
         }
 
@@ -265,10 +265,10 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param vault Address of the target vault.
      * @param shareAmount Amount of shares to mint.
      * @param receiver Address receiving minted shares.
-     * @param minAssetsOut Lower-bound check applied to the returned `assetsOut` value in the current implementation.
+     * @param maxAssetsIn Upper-bound check applied to the returned `assetsOut` value in the current implementation.
      * @return assetsOut Amount of assets consumed by the mint operation.
      */
-    function guardedMint(address vault, uint256 shareAmount, address receiver, uint256 minAssetsOut)
+    function guardedMint(address vault, uint256 shareAmount, address receiver, uint256 maxAssetsIn)
         external
         nonReentrant
         returns (uint256 assetsOut)
@@ -280,8 +280,8 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         vaultGuard.validate(vault, msg.sender, shareAmount, VaultOpType.MINT);
         (,, uint256 previewAssets,) = vaultGuard.getLastCheck(vault, msg.sender);
 
-        if (previewAssets < minAssetsOut) {
-            revert SlippageExceeded(previewAssets, minAssetsOut);
+        if (previewAssets > maxAssetsIn) {
+            revert SlippageExceeded(previewAssets, maxAssetsIn);
         }
 
         address asset = IERC4626(vault).asset();
@@ -295,8 +295,8 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         if (assetsOut == 0) {
             revert ZeroOutput();
         }
-        if (assetsOut < minAssetsOut) {
-            revert SlippageExceeded(assetsOut, minAssetsOut);
+        if (assetsOut > maxAssetsIn) {
+            revert SlippageExceeded(assetsOut, maxAssetsIn);
         }
         // refund any excess assets sent by the user
         if (previewAssets > assetsOut) {
@@ -349,10 +349,10 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
      * @param vault Address of the target vault.
      * @param assetAmount Amount of assets to withdraw.
      * @param receiver Address receiving withdrawn assets.
-     * @param minSharesOut Lower-bound check applied to the returned `sharesOut` value in the current implementation.
+     * @param maxSharesIn Upper-bound check applied to the returned `sharesOut` value in the current implementation.
      * @return sharesOut Amount of shares burned.
      */
-    function guardedWithdraw(address vault, uint256 assetAmount, address receiver, uint256 minSharesOut)
+    function guardedWithdraw(address vault, uint256 assetAmount, address receiver, uint256 maxSharesIn)
         external
         nonReentrant
         returns (uint256 sharesOut)
@@ -364,8 +364,8 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         vaultGuard.validate(vault, msg.sender, assetAmount, VaultOpType.WITHDRAW);
         (, uint256 previewShares,,) = vaultGuard.getLastCheck(vault, msg.sender);
 
-        if (previewShares < minSharesOut) {
-            revert SlippageExceeded(previewShares, minSharesOut);
+        if (previewShares > maxSharesIn) {
+            revert SlippageExceeded(previewShares, maxSharesIn);
         }
 
         IERC20(vault).safeTransferFrom(msg.sender, address(this), previewShares);
@@ -374,8 +374,8 @@ contract ERC4626Router is Ownable, ReentrancyGuard {
         if (sharesOut == 0) {
             revert ZeroOutput();
         }
-        if (sharesOut < minSharesOut) {
-            revert SlippageExceeded(sharesOut, minSharesOut);
+        if (sharesOut > maxSharesIn) {
+            revert SlippageExceeded(sharesOut, maxSharesIn);
         }
 
         // refund any excess shares sent by the user

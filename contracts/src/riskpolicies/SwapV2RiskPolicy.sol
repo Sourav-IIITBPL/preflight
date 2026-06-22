@@ -200,6 +200,7 @@ contract SwapV2RiskPolicy is BaseRiskPolicy {
         report.offChain = offChain;
         report.tokenRisk = tokenRisk;
         report.operation = SwapOpType(core.operation);
+        report.enhancedView = _decodeEnhanced(packedReport);
         report.onChain = SwapV2OnChainView({
             routerNotTrusted: _isFlagSet(core.onChainFlagsPacked, FLAG_ROUTER_NOT_TRUSTED),
             factoryNotTrusted: _isFlagSet(core.onChainFlagsPacked, FLAG_FACTORY_NOT_TRUSTED),

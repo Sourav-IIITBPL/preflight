@@ -42,9 +42,9 @@ contract ERC4626RouterTest is Test {
         new ERC4626Router(address(guard), address(0), address(riskReportNFT));
     }
 
-    function test_constructorCurrentlyAllowsZeroRiskReportNft() public {
-        ERC4626Router localRouter = new ERC4626Router(address(guard), address(policy), address(0));
-        assertEq(address(localRouter.riskReportNFT()), address(0));
+    function test_constructorRevertsForZeroRiskReportNft() public {
+        vm.expectRevert(ERC4626Router.ZeroAddress.selector);
+        new ERC4626Router(address(guard), address(policy), address(0));
     }
 
     function test_ownerSettersUpdateDependencies() public {
@@ -109,7 +109,7 @@ contract ERC4626RouterTest is Test {
 
         vm.startPrank(user);
         asset.approve(address(router), type(uint256).max);
-        uint256 assetsSpent = router.guardedMint(address(vault), 5e18, receiver, 10e18);
+        uint256 assetsSpent = router.guardedMint(address(vault), 5e18, receiver, 25e18);
         vm.stopPrank();
 
         assertEq(assetsSpent, 18e18);
@@ -140,7 +140,7 @@ contract ERC4626RouterTest is Test {
 
         vm.startPrank(user);
         vault.approve(address(router), type(uint256).max);
-        uint256 sharesBurned = router.guardedWithdraw(address(vault), 7e18, receiver, 8e18);
+        uint256 sharesBurned = router.guardedWithdraw(address(vault), 7e18, receiver, 15e18);
         vm.stopPrank();
 
         assertEq(sharesBurned, 9e18);

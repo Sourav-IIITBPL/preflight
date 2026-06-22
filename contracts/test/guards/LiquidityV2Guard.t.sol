@@ -58,12 +58,16 @@ contract LiquidityV2GuardTest is Test {
         // address(0) should be substituted with weth
         factory.setPair(address(tokenA), address(weth), address(0xCAFE));
         // We'd need another mock pair for CAFE to test fully, but the branch tokenA == address(0) is hit.
-        guard.checkLiquidity(user, address(router), address(0), address(tokenB), 1e18, 1e18, LiquidityGuard.LiquidityOpType.ADD_ETH);
+        guard.checkLiquidity(
+            user, address(router), address(0), address(tokenB), 1e18, 1e18, LiquidityGuard.LiquidityOpType.ADD_ETH
+        );
     }
 
     function test_checkLiquidityRevertsForSameToken() public {
         vm.expectRevert("INVALID_TOKEN_ADDRESS");
-        guard.checkLiquidity(user, address(router), address(tokenA), address(tokenA), 1e18, 1e18, LiquidityGuard.LiquidityOpType.ADD);
+        guard.checkLiquidity(
+            user, address(router), address(tokenA), address(tokenA), 1e18, 1e18, LiquidityGuard.LiquidityOpType.ADD
+        );
     }
 
     function test_checkLiquidityFlagsSevereImbalance() public {
@@ -108,12 +112,12 @@ contract LiquidityV2GuardTest is Test {
         pair.setReserves(1e24, 1e24, 0); // Huge reserves
         pair.setTotalSupply(1e18);
 
-        // lpEst = (amountA * lpSupply) / reserveA = (100 * 1e18) / 1e24 = 1e-4 -> 0? 
+        // lpEst = (amountA * lpSupply) / reserveA = (100 * 1e18) / 1e24 = 1e-4 -> 0?
         // No, let's pick amounts to get lpEst > 0 but < MIN_LP (1000)
         // amountA = 500, lpSupply = 1e18, reserveA = 1e18 -> lpEst = 500.
         pair.setReserves(1e18, 1e18, 0);
         pair.setTotalSupply(1e18);
-        
+
         LiquidityGuard.LiquidityV2GuardResult memory result = guard.checkLiquidity(
             user, address(router), address(tokenA), address(tokenB), 500, 500, LiquidityGuard.LiquidityOpType.ADD
         );
@@ -133,26 +137,14 @@ contract LiquidityV2GuardTest is Test {
         guard.setTrustedCaller(trustedCaller, true);
 
         guard.storeCheck(
-            address(router),
-            address(tokenA),
-            address(tokenB),
-            1e18,
-            1e18,
-            user,
-            LiquidityGuard.LiquidityOpType.ADD
+            address(router), address(tokenA), address(tokenB), 1e18, 1e18, user, LiquidityGuard.LiquidityOpType.ADD
         );
 
         LiquidityGuard.LiquidityV2GuardResult memory result = guard.getStoredCheck(user, address(router));
         assertFalse(result.ROUTER_NOT_TRUSTED);
 
         guard.validateCheck(
-            address(router),
-            address(tokenA),
-            address(tokenB),
-            1e18,
-            1e18,
-            user,
-            LiquidityGuard.LiquidityOpType.ADD
+            address(router), address(tokenA), address(tokenB), 1e18, 1e18, user, LiquidityGuard.LiquidityOpType.ADD
         );
     }
 
@@ -161,25 +153,13 @@ contract LiquidityV2GuardTest is Test {
         guard.setTrustedCaller(trustedCaller, true);
 
         guard.storeCheck(
-            address(router),
-            address(tokenA),
-            address(tokenB),
-            1e18,
-            1e18,
-            user,
-            LiquidityGuard.LiquidityOpType.ADD
+            address(router), address(tokenA), address(tokenB), 1e18, 1e18, user, LiquidityGuard.LiquidityOpType.ADD
         );
-        vm.roll(block.number + 1);
+        vm.roll(block.number + 16);
 
         vm.expectRevert(bytes("STALE_LIQ_CHECK"));
         guard.validateCheck(
-            address(router),
-            address(tokenA),
-            address(tokenB),
-            1e18,
-            1e18,
-            user,
-            LiquidityGuard.LiquidityOpType.ADD
+            address(router), address(tokenA), address(tokenB), 1e18, 1e18, user, LiquidityGuard.LiquidityOpType.ADD
         );
     }
 }

@@ -70,10 +70,10 @@ contract LiquidityV2RiskPolicyTest is Test, RiskPolicyStructBuilder {
     function test_compoundRiskAndTiers() public view {
         // Direct decode tests for coverage if evaluate fails
         uint256 packed = 0;
-        packed |= (uint256(PolicyKind.LIQUIDITY_V2) << 80);
-        // sweepSeverityTier = 3 (bits 249-251)
-        packed |= (uint256(3) << 249);
-        
+        packed |= (uint256(uint8(PolicyKind.LIQUIDITY_V2)) << 164);
+        // sweepSeverityTier = 3
+        packed |= (uint256(3) << 235);
+
         LiquidityV2DecodedRiskReport memory report = policy.decode(packed);
         assertEq(report.enhancedView.sweepSeverityTier, 3);
     }
@@ -83,7 +83,7 @@ contract LiquidityV2RiskPolicyTest is Test, RiskPolicyStructBuilder {
         onChain.ROUTER_NOT_TRUSTED = true;
         onChain.FIRST_DEPOSITOR_RISK = true;
 
-        (uint32 packedFlags, , uint8 criticalCount, uint8 warningCount, bool anyHardBlock,,) =
+        (uint32 packedFlags,, uint8 criticalCount, uint8 warningCount, bool anyHardBlock,,) =
             policy.packOnChain(onChain);
 
         assertGt(packedFlags, 0);

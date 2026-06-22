@@ -87,6 +87,8 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
     uint256 public constant MIN_POOL_AGE_BLOCKS = 300; // ~1 hour on mainnet
     /// If one reserve < this fraction of the other (bps), flag SEVERE_IMBALANCE.
     uint256 public constant SEVERE_IMBALANCE_BPS = 100; // 1% — very skewed
+    /// Maximum staleness of a stored swap check (blocks).
+    uint256 public constant MAX_CHECK_STALENESS_BLOCKS = 15; // if validateSwapCheck is called more than this many blocks after storeSwapCheck, it will be considered stale and revert.
 
     /// STORAGE
 
@@ -275,7 +277,7 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
         bool isExactTokenIn,
         address user
     ) external {
-        require(lastCheckBlock[user][router] == block.number, "STALE_CHECK");
+        require(block.number - lastCheckBlock[user][router] <= MAX_CHECK_STALENESS_BLOCKS, "STALE_CHECK");
 
         SwapV2GuardResult memory currentResult;
         uint256[] memory amountsOut;
@@ -386,8 +388,10 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
         uint256 current0 = p.price0CumulativeLast() + price0UQ * timeElapsedSinceTrade;
         uint256 current1 = p.price1CumulativeLast() + price1UQ * timeElapsedSinceTrade;
 
-        twap0UQ = (current0 - snap.cumulative0) / elapsed;
-        twap1UQ = (current1 - snap.cumulative1) / elapsed;
+        unchecked {
+            twap0UQ = (current0 - snap.cumulative0) / elapsed;
+            twap1UQ = (current1 - snap.cumulative1) / elapsed;
+        }
         windowSeconds = elapsed;
     }
 
@@ -652,8 +656,13 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
         }
 
         // TWAP = delta_cumulative / delta_time ,  result is UQ112x112
-        uint256 twap0UQ = (current0 - snap.cumulative0) / windowElapsed;
-        uint256 twap1UQ = (current1 - snap.cumulative1) / windowElapsed;
+        uint256 twap0UQ;
+        uint256 twap1UQ;
+
+        unchecked {
+            twap0UQ = (current0 - snap.cumulative0) / windowElapsed;
+            twap1UQ = (current1 - snap.cumulative1) / windowElapsed;
+        }
 
         address token0 = IUniswapV2Pair(pair).token0();
         uint256 spotUQ;
@@ -682,8 +691,8 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
         IUniswapV2Pair pairContract = IUniswapV2Pair(pair);
         address token0 = pairContract.token0();
         address token1 = pairContract.token1();
-        uint256 rawReserve0 = uint256(r0) / (10 ** IERC20Metadata(token0).decimals());
-        uint256 rawReserve1 = uint256(r1) / (10 ** IERC20Metadata(token1).decimals());
+        uint256 rawReserve0 = uint256(r0) / (10 ** _safeDecimals(token0));
+        uint256 rawReserve1 = uint256(r1) / (10 ** _safeDecimals(token1));
 
         if (rawReserve0 < MINIMUM_RAW_RESERVE || rawReserve1 < MINIMUM_RAW_RESERVE) {
             flags |= 1;
@@ -764,5 +773,13 @@ contract SwapV2Guard is Ownable, ReentrancyGuard, AutomationCompatibleInterface 
     function _withinDeviation(uint256 spot, uint256 twap) internal pure returns (bool) {
         uint256 diff = spot > twap ? spot - twap : twap - spot;
         return (diff * 10_000) / twap < MAX_DEVIATION_BPS;
+    }
+
+    function _safeDecimals(address token) internal view returns (uint8) {
+        try IERC20Metadata(token).decimals() returns (uint8 d) {
+            return d;
+        } catch {
+            return 18;
+        }
     }
 }

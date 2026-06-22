@@ -81,6 +81,7 @@ contract LiquidityGuard is Ownable, ReentrancyGuard {
     uint256 public constant MAX_RATIO_DEVIATION = 500; // 5% tolerance on amount ratio
     uint256 public constant MAX_LP_IMPACT_BPS = 1_000; // 10% of pool
     uint256 public constant MIN_LP = 1_000;
+    uint256 public constant MAX_CHECK_STALENESS_BLOCKS = 15; // if validateCheck is called more than this many blocks after storeCheck, it will be considered stale and revert.
 
     ITokenGuard public tokenGuard;
     /// @notice Routers whose factory/pair combination is trusted by this guard.
@@ -215,7 +216,7 @@ contract LiquidityGuard is Ownable, ReentrancyGuard {
         address user,
         LiquidityOpType operationType
     ) external view {
-        require(lastCheckBlock[user][router] == block.number, "STALE_LIQ_CHECK");
+        require(block.number - lastCheckBlock[user][router] <= MAX_CHECK_STALENESS_BLOCKS, "STALE_LIQ_CHECK");
         LiquidityV2GuardResult memory currentResult =
             _checkLiquidity(router, tokenA, tokenB, amountADesired, amountBDesired, operationType);
         uint96 currentFingerprint = _packed(currentResult);
@@ -365,7 +366,11 @@ contract LiquidityGuard is Ownable, ReentrancyGuard {
             uint256 poolRatio = (reserveB * 1e18) / reserveA;
             uint256 inputRatio = (amountB * 1e18) / amountA;
             uint256 delta = poolRatio > inputRatio ? poolRatio - inputRatio : inputRatio - poolRatio;
-            if ((delta * MAX_BPS) / poolRatio > MAX_RATIO_DEVIATION) result.AMOUNT_RATIO_DEVIATION = true;
+
+            if (poolRatio == 0) result.AMOUNT_RATIO_DEVIATION = true;
+            if (poolRatio > 0) {
+                if ((delta * MAX_BPS) / poolRatio > MAX_RATIO_DEVIATION) result.AMOUNT_RATIO_DEVIATION = true;
+            }
 
             if ((amountA * MAX_BPS) / reserveA > MAX_LP_IMPACT_BPS) result.HIGH_LP_IMPACT = true;
         }

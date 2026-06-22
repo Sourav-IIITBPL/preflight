@@ -125,7 +125,7 @@ contract SwapV2GuardTest is Test {
         guard.setTrustedRouter(address(router), true);
         // r0 = 2000, r1 = 10 -> r1 < 1% of r0 (20)
         pairAB.setReserves(2000e18, 10e18, uint32(block.timestamp - 1));
-        
+
         address[] memory path = new address[](2);
         path[0] = address(tokenA);
         path[1] = address(tokenB);
@@ -137,7 +137,7 @@ contract SwapV2GuardTest is Test {
     function test_swapCheckFlagsPoolTooNew() public {
         guard.setTrustedRouter(address(router), true);
         guard.addTrackedPool(address(pairAB)); // sets firstSeenBlock
-        
+
         address[] memory path = new address[](2);
         path[0] = address(tokenA);
         path[1] = address(tokenB);
@@ -174,12 +174,12 @@ contract SwapV2GuardTest is Test {
     function test_swapCheckFlagsPriceManipulated() public {
         guard.setTrustedRouter(address(router), true);
         guard.addTrackedPool(address(pairAB));
-        
+
         // Initial state: r0=2000, r1=2000 -> price=1. cumulativePrice=0. timestamp=1
         vm.warp(block.timestamp + 100);
         // Move spot: r0=2000, r1=2500 -> spot price = 1.25 (25% up)
         pairAB.setReserves(2000e18, 2500e18, uint32(block.timestamp - 50));
-        
+
         address[] memory path = new address[](2);
         path[0] = address(tokenA);
         path[1] = address(tokenB);
@@ -229,7 +229,7 @@ contract SwapV2GuardTest is Test {
         path[1] = address(tokenB);
 
         guard.storeSwapCheck(address(router), path, 1e18, true, user);
-        vm.roll(block.number + 1);
+        vm.roll(block.number + 16);
 
         vm.expectRevert(bytes("STALE_CHECK"));
         guard.validateSwapCheck(address(router), path, 1e18, true, user);

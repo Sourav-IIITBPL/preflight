@@ -67,7 +67,7 @@ contract ERC4626RiskPolicyTest is Test, RiskPolicyStructBuilder {
     function test_compoundRiskDetection() public view {
         VaultGuardResult memory onChain = _baseVaultGuardResult();
         VaultOffChainResult memory offChain = _baseVaultOffChain();
-        
+
         offChain.trace.hasDangerousDelegateCall = true;
         offChain.trace.hasUpgradeCall = false;
         offChain.trace.hasApprovalDrain = true;
@@ -86,9 +86,10 @@ contract ERC4626RiskPolicyTest is Test, RiskPolicyStructBuilder {
         // kind = ERC4626 (0)
         // Composite score = 85 (bits 64-71)
         packed |= (uint256(85) << 64);
+        packed |= (uint256(uint8(PolicyRiskCategory.CRITICAL)) << 88);
         // economicSeverityTier = 7 (bits 219-221)
         packed |= (uint256(7) << 219);
-        
+
         ERC4626DecodedRiskReport memory report = policy.decode(packed);
         assertEq(report.enhancedView.economicSeverityTier, 7);
         assertEq(uint8(report.core.finalCategory), uint8(PolicyRiskCategory.CRITICAL));
@@ -99,7 +100,7 @@ contract ERC4626RiskPolicyTest is Test, RiskPolicyStructBuilder {
         onChain.VAULT_NOT_WHITELISTED = true;
         onChain.DONATION_ATTACK = true;
 
-        (uint32 packedFlags, , uint8 criticalCount, uint8 warningCount, bool anyHardBlock,,) =
+        (uint32 packedFlags,, uint8 criticalCount, uint8 warningCount, bool anyHardBlock,,) =
             policy.packOnChain(onChain, VaultOpType.DEPOSIT);
 
         assertGt(packedFlags, 0);

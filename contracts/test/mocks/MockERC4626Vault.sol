@@ -16,7 +16,7 @@ contract MockERC4626Vault {
     uint256 internal _previewMint;
     uint256 internal _previewWithdraw;
     uint256 internal _previewRedeem;
-    
+
     bool internal _usePreviewDeposit;
     bool internal _usePreviewMint;
     bool internal _usePreviewWithdraw;
@@ -24,7 +24,7 @@ contract MockERC4626Vault {
 
     uint256 internal _convertToShares;
     uint256 internal _convertToAssets;
-    
+
     bool internal _useConvertToShares;
     bool internal _useConvertToAssets;
 
