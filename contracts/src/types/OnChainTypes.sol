@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
 /// @notice Canonical on-chain risk flags produced by the ERC-4626 vault guard.

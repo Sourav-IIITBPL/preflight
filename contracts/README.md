@@ -93,3 +93,23 @@ They are in early-stage development .
 Do **not** use with real funds in production environments without proper audits.
 
 ---
+
+
+// new deploments after updateions ..
+
+eth sepolia 
+== Logs ==
+  --- Starting Deployment ---
+  TokenGuard deployed at:  0x7Cb784eBe1b6a251B5C4D5010d53D205c3253e57
+  SVGRenderer deployed at: 0xBEEB299B33E7b1cB092470eCe7069Ae4D2A36245
+  RiskReportNFT deployed at: 0xaAaE3Ff2300C64e599A8D9B9524ee4d9d5f57dd4
+  ERC4626VaultGuard deployed at: 0xa8dC4838462Cacd42af0aEaD4F97728aB852b28a
+  SwapV2Guard deployed at:       0xfD524e8680914b1f88A1c969866927A761991B7a
+  LiquidityV2Guard deployed at:  0x650316515b6AFFB3727649e302894f69813046ff
+  ERC4626RiskPolicy deployed at: 0xb9479454cBD56F36E18F2A9D6b48bc9C1376f64F
+  SwapV2RiskPolicy deployed at:  0xBeaaBD96259e216c8Ce2E9F70c771c23c7A4E270
+  LiquidityV2RiskPolicy deployed at: 0xeb8c862a8Df441452f31555b01e67Fb587B30ABC
+  ERC4626Router deployed at:     0xCA28eFb6104a388e1838aD318bD07214ab14f74F
+  SwapV2Router deployed at:      0xf804b62C6f93B7FAC3E9CbE4593Bfc7bcc5AE652
+  LiquidityV2Router deployed at: 0xE0b5feEAd3636CCeDea17F5bc8A430d174C294bE
+  --- Deployment Completed ---
